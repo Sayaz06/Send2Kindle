@@ -169,12 +169,8 @@ async function processUserQueue(uid, clientId, clientSecret) {
       .limit(1)
       .get();
   } catch (idxErr) {
-    console.warn("orderBy index missing, fallback:", idxErr.message);
-    queueSnap = await db
-      .collection(`users/${uid}/kindle_queue`)
-      .where("status", "==", "pending")
-      .limit(5)
-      .get();
+    console.error("orderBy index missing — please create index in Firestore:", idxErr.message);
+    return;
   }
 
   if (queueSnap.empty) {
