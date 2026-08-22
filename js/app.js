@@ -938,7 +938,7 @@ document.getElementById('btn-sort-az').addEventListener('click', async () => {
   const sorted = [...pending].sort((a, b) => a.originalName.localeCompare(b.originalName, undefined, { numeric: true, sensitivity: 'base' }));
   const baseTime = Date.now();
   for (let i = 0; i < sorted.length; i++) {
-    await updateQueueItem(sorted[i].id, { addedAt: baseTime + i });
+    await updateQueueItem(sorted[i].id, { addedAt: baseTime + (i * 1000) });
   }
   showToast('✅ Queue disusun A-Z!', 'ok');
 });
