@@ -105,7 +105,7 @@ function loadSettings() {
   try {
     const s = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
     elKindleEmail.value  = s.kindleEmail  || '';
-    elDelayMinutes.value = s.delayMinutes || 5;
+    elDelayMinutes.value = s.delayMinutes || 1;
   } catch (_) {}
 }
 
@@ -131,7 +131,7 @@ function saveSettings() {
 function getSettings() {
   return {
     kindleEmail:  elKindleEmail.value.trim(),
-    delayMinutes: parseInt(elDelayMinutes.value) || 5,
+    delayMinutes: parseInt(elDelayMinutes.value) || 1,
   };
 }
 
