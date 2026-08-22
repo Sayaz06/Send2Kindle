@@ -24,19 +24,33 @@ function getMimeType(fileName) {
 }
 
 async function getAccessToken(refreshToken, clientId, clientSecret) {
+  console.log("getAccessToken: clientId =", clientId ? clientId.slice(0, 20) + "..." : "KOSONG");
+  console.log("getAccessToken: clientSecret =", clientSecret ? "****" + clientSecret.slice(-4) : "KOSONG");
+  console.log("getAccessToken: refreshToken =", refreshToken ? refreshToken.slice(0, 10) + "..." : "KOSONG");
+
+  const params = new URLSearchParams({
+    client_id: clientId.trim(),
+    client_secret: clientSecret.trim(),
+    refresh_token: refreshToken.trim(),
+    grant_type: "refresh_token",
+  });
+
   const res = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id: clientId,
-      client_secret: clientSecret,
-      refresh_token: refreshToken,
-      grant_type: "refresh_token",
-    }),
+    body: params,
   });
+
   const data = await res.json();
+  console.log("Token response status:", res.status);
+  console.log("Token response:", JSON.stringify({
+    has_access_token: !!data.access_token,
+    error: data.error,
+    error_description: data.error_description,
+  }));
+
   if (!data.access_token) {
-    throw new Error(data.error_description || data.error || "Token refresh failed");
+    throw new Error(`Token refresh failed: ${data.error} — ${data.error_description}`);
   }
   return data.access_token;
 }
@@ -87,6 +101,7 @@ async function sendViaGmail(accessToken, toEmail, fileName, fileBuffer) {
 
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
+    console.error("Gmail send error:", JSON.stringify(err));
     throw new Error(err.error?.message || `Gmail API ${response.status}`);
   }
   return response.json();
@@ -105,23 +120,37 @@ async function recoverStuckSending(uid) {
 }
 
 async function processUserQueue(uid, clientId, clientSecret) {
+  console.log(`processUserQueue START: uid=${uid}`);
+
   const settingsRef = db.doc(`users/${uid}/settings/queue`);
   const settingsSnap = await settingsRef.get();
-  if (!settingsSnap.exists) return;
-
-  const settings = settingsSnap.data();
-  if (!settings.queueRunning) {
-    await db.doc(`active_queues/${uid}`).delete().catch(() => {});
+  if (!settingsSnap.exists) {
+    console.log(`No settings/queue for ${uid}`);
     return;
   }
-  if (!settings.kindleEmail) return;
+
+  const settings = settingsSnap.data();
+  console.log(`settings.queueRunning=${settings.queueRunning}, kindleEmail=${settings.kindleEmail}`);
+
+  if (!settings.queueRunning) {
+    await db.doc(`active_queues/${uid}`).delete().catch(() => {});
+    console.log(`queueRunning=false, deleted active_queues/${uid}`);
+    return;
+  }
+  if (!settings.kindleEmail) {
+    console.log(`No kindleEmail for ${uid}`);
+    return;
+  }
 
   await recoverStuckSending(uid);
 
   const delayMs = (settings.delayMinutes || 5) * 60 * 1000;
   const now = Date.now();
   const nextSendAt = settings.nextSendAt || 0;
-  if (nextSendAt && now < nextSendAt) return;
+  if (nextSendAt && now < nextSendAt) {
+    console.log(`Delay not reached. Next: ${new Date(nextSendAt).toISOString()}`);
+    return;
+  }
 
   const secretSnap = await db.doc(`users/${uid}/secrets/gmail`).get();
   if (!secretSnap.exists || !secretSnap.data().refreshToken) {
@@ -129,8 +158,8 @@ async function processUserQueue(uid, clientId, clientSecret) {
     return;
   }
   const { refreshToken } = secretSnap.data();
+  console.log(`refreshToken found: ${refreshToken.slice(0, 10)}...`);
 
-  // Query pending without composite index if possible — try simple where first
   let queueSnap;
   try {
     queueSnap = await db
@@ -140,7 +169,6 @@ async function processUserQueue(uid, clientId, clientSecret) {
       .limit(1)
       .get();
   } catch (idxErr) {
-    // Fallback without orderBy if index missing
     console.warn("orderBy index missing, fallback:", idxErr.message);
     queueSnap = await db
       .collection(`users/${uid}/kindle_queue`)
@@ -156,26 +184,29 @@ async function processUserQueue(uid, clientId, clientSecret) {
     return;
   }
 
-  // Pick earliest by addedAt if multiple
   const docs = queueSnap.docs.slice().sort((a, b) => (a.data().addedAt || 0) - (b.data().addedAt || 0));
   const docSnap = docs[0];
   const item = docSnap.data();
   const itemRef = docSnap.ref;
 
+  console.log(`Processing item: ${item.originalName}`);
   await itemRef.update({ status: "sending", sendingAt: Date.now() });
 
   try {
     const accessToken = await getAccessToken(refreshToken, clientId, clientSecret);
+    console.log(`Access token obtained, downloading file...`);
+
     const fileRes = await fetch(item.url);
     if (!fileRes.ok) throw new Error(`Download failed: ${fileRes.status}`);
     const fileBuffer = Buffer.from(await fileRes.arrayBuffer());
+    console.log(`File downloaded: ${fileBuffer.length} bytes`);
 
     await sendViaGmail(accessToken, settings.kindleEmail, item.originalName, fileBuffer);
     await itemRef.update({ status: "sent", sentAt: Date.now(), error: null });
     await settingsRef.update({ nextSendAt: Date.now() + delayMs });
-    console.log(`Sent ${item.originalName} for ${uid}`);
+    console.log(`SUCCESS: Sent ${item.originalName} for ${uid}`);
   } catch (err) {
-    console.error(`Failed ${item.originalName}:`, err.message);
+    console.error(`FAILED ${item.originalName}: ${err.message}`);
     await itemRef.update({ status: "failed", error: err.message || "Unknown error" });
     await settingsRef.update({ nextSendAt: Date.now() + delayMs });
   }
@@ -189,19 +220,29 @@ exports.processKindleQueues = onSchedule(
     memory: "512MiB",
   },
   async () => {
+    console.log("processKindleQueues TRIGGERED:", new Date().toISOString());
     const clientId = CLIENT_ID.value();
     const clientSecret = CLIENT_SECRET.value();
+    console.log("Secrets loaded. clientId starts:", clientId ? clientId.slice(0, 15) : "EMPTY");
 
-    // Top-level collection — no collectionGroup index needed
     const running = await db.collection("active_queues").get();
+    console.log(`active_queues count: ${running.size}`);
+
+    if (running.empty) {
+      console.log("No active queues found. Exiting.");
+      return;
+    }
 
     for (const docSnap of running.docs) {
       const uid = docSnap.id;
+      console.log(`Processing uid: ${uid}`);
       try {
         await processUserQueue(uid, clientId, clientSecret);
       } catch (e) {
         console.error(`Error processing ${uid}:`, e.message);
       }
     }
+
+    console.log("processKindleQueues DONE");
   }
 );
