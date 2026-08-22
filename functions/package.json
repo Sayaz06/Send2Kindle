@@ -1,0 +1,13 @@
+{
+  "name": "send2kindle-functions",
+  "description": "Background queue processor for Kindle Queue",
+  "engines": { "node": "20" },
+  "main": "index.js",
+  "dependencies": {
+    "firebase-admin": "^12.0.0",
+    "firebase-functions": "^5.0.0",
+    "googleapis": "^140.0.0",
+    "node-fetch": "^2.7.0"
+  },
+  "private": true
+}
