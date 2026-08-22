@@ -191,8 +191,17 @@ async function addKindleAddress() {
   }
 }
 
-function loadSettings() {
+async function loadSettings() {
   try {
+    if (currentUser) {
+      const snap = await getDoc(doc(db, 'users', currentUser.uid, 'settings', 'queue'));
+      if (snap.exists()) {
+        const s = snap.data();
+        elKindleEmail.value  = s.kindleEmail  || '';
+        elDelayMinutes.value = s.delayMinutes || 1;
+        return;
+      }
+    }
     const s = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
     elKindleEmail.value  = s.kindleEmail  || '';
     elDelayMinutes.value = s.delayMinutes || 1;
@@ -412,7 +421,7 @@ onAuthStateChanged(auth, async (user) => {
     elUserName.textContent = user.displayName || user.email;
     elGmailInfo.style.display = 'block';
     elGmailSender.textContent = user.email;
-    loadSettings();
+    await loadSettings();
     subscribeQueue();
     subscribeSettings();
     subscribeAddresses();
