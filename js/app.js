@@ -799,6 +799,11 @@ async function uploadFiles(files) {
   elUploadProgress.style.display = 'flex';
   let done = 0;
   for (const f of valid) {
+    const isDuplicate = queueItems.some(i => i.originalName === f.name && i.status !== 'sent');
+    if (isDuplicate) {
+      showToast(`⚠️ Dah ada dalam queue: ${f.name}`, 'error');
+      continue;
+    }
     elUploadText.textContent = `Memuat naik ${f.name}...`;
     try {
       const { path, url } = await uploadFile(f, pct => {
