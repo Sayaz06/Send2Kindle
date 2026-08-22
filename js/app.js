@@ -107,12 +107,38 @@ function showToast(msg, type = '', dur = 3500) {
 
 // ── Log Duplikat ──
 let skipLog = [];
+let unsubscribeLog = null;
 
-function addToLog(fileName, reason) {
-  const item = { id: Date.now() + Math.random(), fileName, reason, time: Date.now() };
-  skipLog.unshift(item);
-  renderLog();
-  document.getElementById('log-section').style.display = 'block';
+function skipLogCol() {
+  return collection(db, 'users', currentUser.uid, 'skip_log');
+}
+
+function subscribeLog() {
+  if (!currentUser) return;
+  if (unsubscribeLog) unsubscribeLog();
+  unsubscribeLog = onSnapshot(
+    query(skipLogCol(), orderBy('time', 'desc')),
+    snap => {
+      skipLog = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      renderLog();
+      if (skipLog.length > 0) {
+        document.getElementById('log-section').style.display = 'block';
+      }
+    },
+    () => {}
+  );
+}
+
+async function addToLog(fileName, reason) {
+  try {
+    await setDoc(doc(skipLogCol()), {
+      fileName,
+      reason,
+      time: Date.now(),
+    });
+  } catch (e) {
+    console.warn('addToLog failed', e);
+  }
 }
 
 function renderLog() {
@@ -135,9 +161,12 @@ function renderLog() {
   `).join('');
 }
 
-window.deleteLogItem = function(id) {
-  skipLog = skipLog.filter(i => i.id !== id);
-  renderLog();
+window.deleteLogItem = async function(id) {
+  try {
+    await deleteDoc(doc(skipLogCol(), id));
+  } catch (e) {
+    showToast('❌ Gagal padam log.', 'error');
+  }
 };
 
 function kindleAddressCol() {
@@ -427,6 +456,7 @@ async function signOutUser() {
   if (unsubscribeQueue) { unsubscribeQueue(); unsubscribeQueue = null; }
   if (unsubscribeSettings) { unsubscribeSettings(); unsubscribeSettings = null; }
   if (unsubscribeAddresses) { unsubscribeAddresses(); unsubscribeAddresses = null; }
+  if (unsubscribeLog) { unsubscribeLog(); unsubscribeLog = null; }
   accessToken = null;
   gmailReady = false;
   await signOut(auth);
@@ -460,6 +490,7 @@ onAuthStateChanged(auth, async (user) => {
     subscribeQueue();
     subscribeSettings();
     subscribeAddresses();
+    subscribeLog();
     await restoreQueueState();
     if (!accessToken) await trySilentGmailToken();
   } else {
@@ -912,10 +943,15 @@ document.getElementById('btn-sort-az').addEventListener('click', async () => {
   showToast('✅ Queue disusun A-Z!', 'ok');
 });
 
-document.getElementById('btn-clear-log').addEventListener('click', () => {
-  skipLog = [];
-  renderLog();
-  showToast('🗑️ Log dibersihkan.', 'ok');
+document.getElementById('btn-clear-log').addEventListener('click', async () => {
+  try {
+    for (const item of skipLog) {
+      await deleteDoc(doc(skipLogCol(), item.id));
+    }
+    showToast('🗑️ Log dibersihkan.', 'ok');
+  } catch (e) {
+    showToast('❌ Gagal bersihkan log.', 'error');
+  }
 });
 
 elBtnClearSent.addEventListener('click', async () => {
