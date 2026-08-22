@@ -870,6 +870,8 @@ document.getElementById('btn-sort-az').addEventListener('click', async () => {
   }
   showToast('✅ Queue disusun A-Z!', 'ok');
 });
+
+elBtnClearSent.addEventListener('click', async () => {
   const toDelete = queueItems.filter(i => i.status === 'sent' || i.status === 'failed');
   for (const item of toDelete) {
     await deleteQueueItem(item.id);
