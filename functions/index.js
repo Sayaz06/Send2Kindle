@@ -1,6 +1,6 @@
 /**
  * Kindle Queue — Background processor
- * Auto-recovers items stuck in "sending" for > 5 minutes
+ * Uses top-level active_queues/{uid} to avoid collectionGroup index issues
  */
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { defineSecret } = require("firebase-functions/params");
@@ -11,7 +11,6 @@ const db = admin.firestore();
 
 const CLIENT_ID = defineSecret("GOOGLE_CLIENT_ID");
 const CLIENT_SECRET = defineSecret("GOOGLE_CLIENT_SECRET");
-const STUCK_MS = 5 * 60 * 1000; // 5 min
 
 function getMimeType(fileName) {
   const ext = (fileName.split(".").pop() || "").toLowerCase();
@@ -93,24 +92,15 @@ async function sendViaGmail(accessToken, toEmail, fileName, fileBuffer) {
   return response.json();
 }
 
-/** Reset item stuck at sending */
 async function recoverStuckSending(uid) {
   const stuckSnap = await db
     .collection(`users/${uid}/kindle_queue`)
     .where("status", "==", "sending")
     .get();
 
-  const now = Date.now();
   for (const d of stuckSnap.docs) {
-    const data = d.data();
-    // Tiada timestamp sending — anggap stuck jika sudah lama di queue
-    // Guna addedAt / sentAt / updated heuristic: selalu recover sending yang wujud
-    // (sending sepatutnya singkat; kalau masih sending bila CF jalan = stuck)
-    await d.ref.update({
-      status: "pending",
-      error: null,
-    });
-    console.log(`Recovered stuck sending → pending: ${data.originalName}`);
+    await d.ref.update({ status: "pending", error: null });
+    console.log(`Recovered stuck sending → pending: ${d.data().originalName}`);
   }
 }
 
@@ -120,10 +110,12 @@ async function processUserQueue(uid, clientId, clientSecret) {
   if (!settingsSnap.exists) return;
 
   const settings = settingsSnap.data();
-  if (!settings.queueRunning) return;
+  if (!settings.queueRunning) {
+    await db.doc(`active_queues/${uid}`).delete().catch(() => {});
+    return;
+  }
   if (!settings.kindleEmail) return;
 
-  // Recover stuck "sending" dulu
   await recoverStuckSending(uid);
 
   const delayMs = (settings.delayMinutes || 5) * 60 * 1000;
@@ -138,20 +130,35 @@ async function processUserQueue(uid, clientId, clientSecret) {
   }
   const { refreshToken } = secretSnap.data();
 
-  const queueSnap = await db
-    .collection(`users/${uid}/kindle_queue`)
-    .where("status", "==", "pending")
-    .orderBy("addedAt", "asc")
-    .limit(1)
-    .get();
+  // Query pending without composite index if possible — try simple where first
+  let queueSnap;
+  try {
+    queueSnap = await db
+      .collection(`users/${uid}/kindle_queue`)
+      .where("status", "==", "pending")
+      .orderBy("addedAt", "asc")
+      .limit(1)
+      .get();
+  } catch (idxErr) {
+    // Fallback without orderBy if index missing
+    console.warn("orderBy index missing, fallback:", idxErr.message);
+    queueSnap = await db
+      .collection(`users/${uid}/kindle_queue`)
+      .where("status", "==", "pending")
+      .limit(5)
+      .get();
+  }
 
   if (queueSnap.empty) {
     await settingsRef.update({ queueRunning: false, nextSendAt: null });
+    await db.doc(`active_queues/${uid}`).delete().catch(() => {});
     console.log(`Queue empty for ${uid}, stopped`);
     return;
   }
 
-  const docSnap = queueSnap.docs[0];
+  // Pick earliest by addedAt if multiple
+  const docs = queueSnap.docs.slice().sort((a, b) => (a.data().addedAt || 0) - (b.data().addedAt || 0));
+  const docSnap = docs[0];
   const item = docSnap.data();
   const itemRef = docSnap.ref;
 
@@ -185,15 +192,11 @@ exports.processKindleQueues = onSchedule(
     const clientId = CLIENT_ID.value();
     const clientSecret = CLIENT_SECRET.value();
 
-    const running = await db
-      .collectionGroup("settings")
-      .where("queueRunning", "==", true)
-      .get();
+    // Top-level collection — no collectionGroup index needed
+    const running = await db.collection("active_queues").get();
 
     for (const docSnap of running.docs) {
-      const parts = docSnap.ref.path.split("/");
-      if (parts.length < 2 || parts[0] !== "users") continue;
-      const uid = parts[1];
+      const uid = docSnap.id;
       try {
         await processUserQueue(uid, clientId, clientSecret);
       } catch (e) {
