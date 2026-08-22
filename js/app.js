@@ -1,6 +1,7 @@
 // ═══════════════════════════════════════════════════
 // Kindle Queue Manager
 // Firebase Auth (Google) + Firebase Storage + Firestore + Gmail API
+// Background queue via Cloud Functions (see BACKGROUND_SETUP.md)
 // ═══════════════════════════════════════════════════
 
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
@@ -27,10 +28,7 @@ const firebaseConfig = {
   appId:             "1:792580618622:web:f0efb1d630e795584d5b2f"
 };
 
-// ─── Google OAuth Client ID ───
 const GOOGLE_CLIENT_ID = "792580618622-totif96rt8cd66dnlosaao7tg7ns22is.apps.googleusercontent.com";
-
-// ─── Gmail API Scope ───
 const GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.send";
 
 const firebaseApp = initializeApp(firebaseConfig, 'kindle-queue');
@@ -41,9 +39,8 @@ const storage     = getStorage(firebaseApp);
 const QUEUE_COL   = 'kindle_queue';
 const STORAGE_KEY = 'kindle_queue_settings';
 
-// ─── State ───
 let currentUser     = null;
-let accessToken     = null;   // Gmail API token
+let accessToken     = null;
 let isRunning       = false;
 let queueItems      = [];
 let queueTimer      = null;
@@ -53,7 +50,6 @@ let unsubscribeQueue = null;
 let tokenClient     = null;
 let gmailReady      = false;
 
-// ─── DOM ───
 const $ = id => document.getElementById(id);
 
 const elLoginScreen   = $('login-screen');
@@ -96,9 +92,6 @@ const elQueueList     = $('queue-list');
 const elQueueCount    = $('queue-count');
 const elToast         = $('toast');
 
-// ═══════════════════════════════════════════════════
-// TOAST
-// ═══════════════════════════════════════════════════
 let toastTimer;
 function showToast(msg, type = '', dur = 3500) {
   elToast.textContent = msg;
@@ -107,9 +100,6 @@ function showToast(msg, type = '', dur = 3500) {
   toastTimer = setTimeout(() => elToast.classList.remove('show'), dur);
 }
 
-// ═══════════════════════════════════════════════════
-// SETTINGS
-// ═══════════════════════════════════════════════════
 function loadSettings() {
   try {
     const s = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
@@ -125,6 +115,15 @@ function saveSettings() {
     return false;
   }
   localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+  // Sync ke Firestore untuk Cloud Function
+  if (currentUser) {
+    setDoc(doc(db, 'users', currentUser.uid, 'settings', 'queue'), {
+      kindleEmail: s.kindleEmail,
+      delayMinutes: s.delayMinutes,
+      senderEmail: currentUser.email || null,
+      updatedAt: Date.now(),
+    }, { merge: true }).catch(() => {});
+  }
   showToast('✅ Tetapan disimpan.', 'ok');
   return true;
 }
@@ -136,9 +135,24 @@ function getSettings() {
   };
 }
 
-// ═══════════════════════════════════════════════════
-// GOOGLE AUTH + GMAIL TOKEN (auto-refresh)
-// ═══════════════════════════════════════════════════
+/** Flag background queue untuk Cloud Function */
+async function setQueueRunning(running) {
+  if (!currentUser) return;
+  const s = getSettings();
+  try {
+    await setDoc(doc(db, 'users', currentUser.uid, 'settings', 'queue'), {
+      kindleEmail: s.kindleEmail,
+      delayMinutes: s.delayMinutes,
+      senderEmail: currentUser.email || null,
+      queueRunning: running,
+      nextSendAt: running ? Date.now() : null,
+      updatedAt: Date.now(),
+    }, { merge: true });
+  } catch (e) {
+    console.warn('setQueueRunning failed', e);
+  }
+}
+
 const provider = new GoogleAuthProvider();
 provider.addScope(GMAIL_SCOPE);
 provider.setCustomParameters({ access_type: 'online', prompt: 'select_account' });
@@ -165,19 +179,17 @@ function initTokenClient() {
   tokenClient = google.accounts.oauth2.initTokenClient({
     client_id: GOOGLE_CLIENT_ID,
     scope: GMAIL_SCOPE,
-    callback: () => {}, // diganti per-request
+    callback: () => {},
   });
   return tokenClient;
 }
 
-/** Minta Gmail access token. prompt: '' = cuba silent, 'consent' = paksa popup */
 function requestGmailToken(prompt = '') {
   return new Promise(async (resolve, reject) => {
     try {
       await waitForGis();
       const client = initTokenClient();
       if (!client) return reject(new Error('Token client gagal init'));
-
       client.callback = (resp) => {
         if (resp.error) {
           accessToken = null;
@@ -189,7 +201,6 @@ function requestGmailToken(prompt = '') {
         gmailReady = true;
         resolve(accessToken);
       };
-
       client.requestAccessToken({ prompt });
     } catch (err) {
       reject(err);
@@ -197,18 +208,13 @@ function requestGmailToken(prompt = '') {
   });
 }
 
-/** Cuba dapat token silently bila user sudah log masuk Firebase */
 async function trySilentGmailToken() {
-  if (accessToken) {
-    gmailReady = true;
-    return true;
-  }
+  if (accessToken) { gmailReady = true; return true; }
   try {
-    await requestGmailToken(''); // silent
+    await requestGmailToken('');
     showToast('✅ Gmail ready.', 'ok', 2000);
     return true;
   } catch (_) {
-    // Silent gagal — token akan diminta bila user tekan Mula Queue
     gmailReady = false;
     return false;
   }
@@ -222,7 +228,6 @@ async function signIn() {
       accessToken = credential.accessToken;
       gmailReady = true;
     }
-    // Pastikan ada token Gmail (fallback ke GIS)
     if (!accessToken) {
       try { await requestGmailToken('consent'); } catch (_) {}
     }
@@ -238,17 +243,12 @@ async function signOutUser() {
   if (unsubscribeQueue) { unsubscribeQueue(); unsubscribeQueue = null; }
   accessToken = null;
   gmailReady = false;
-  // Revoke GIS token kalau ada
-  if (accessToken && window.google?.accounts?.oauth2) {
-    try { google.accounts.oauth2.revoke(accessToken); } catch (_) {}
-  }
   await signOut(auth);
   showToast('👋 Sudah log keluar.', '');
 }
 
 async function ensureToken() {
   if (accessToken) return accessToken;
-  // Cuba silent dulu, kemudian consent popup
   try {
     return await requestGmailToken('');
   } catch (_) {
@@ -272,11 +272,7 @@ onAuthStateChanged(auth, async (user) => {
     elGmailSender.textContent = user.email;
     loadSettings();
     subscribeQueue();
-
-    // Auto-dapat Gmail token tanpa user klik log masuk lagi
-    if (!accessToken) {
-      await trySilentGmailToken();
-    }
+    if (!accessToken) await trySilentGmailToken();
   } else {
     elLoginScreen.style.display = 'flex';
     elMainApp.style.display = 'none';
@@ -288,15 +284,10 @@ onAuthStateChanged(auth, async (user) => {
   }
 });
 
-// ═══════════════════════════════════════════════════
-// GMAIL API — Hantar E-mel dengan Attachment
-// ═══════════════════════════════════════════════════
 async function sendViaGmailAPI(toEmail, fileName, fileBlob) {
   const token = await ensureToken();
-
   const fileBase64 = await blobToBase64(fileBlob);
   const mimeType   = getMimeType(fileName);
-
   const boundary = `boundary_${Date.now()}`;
   const emailLines = [
     `To: ${toEmail}`,
@@ -343,17 +334,13 @@ async function sendViaGmailAPI(toEmail, fileName, fileBlob) {
     }
     throw new Error(err.error?.message || `Gmail API error ${response.status}`);
   }
-
   return await response.json();
 }
 
 function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => {
-      const base64 = reader.result.split(',')[1];
-      resolve(base64);
-    };
+    reader.onload = () => resolve(reader.result.split(',')[1]);
     reader.onerror = reject;
     reader.readAsDataURL(blob);
   });
@@ -370,15 +357,11 @@ function getMimeType(fileName) {
   return map[ext] || 'application/octet-stream';
 }
 
-// ═══════════════════════════════════════════════════
-// FIREBASE STORAGE — Upload & Download
-// ═══════════════════════════════════════════════════
 async function uploadFile(file, onProgress) {
   const ext  = file.name.split('.').pop().toLowerCase();
   const id   = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
   const path = `kindle_queue/${currentUser.uid}/${id}.${ext}`;
   const sRef = storageRef(storage, path);
-
   return new Promise((resolve, reject) => {
     const task = uploadBytesResumable(sRef, file);
     task.on('state_changed',
@@ -402,9 +385,6 @@ async function deleteFromStorage(path) {
   try { await deleteObject(storageRef(storage, path)); } catch (_) {}
 }
 
-// ═══════════════════════════════════════════════════
-// FIRESTORE — Queue CRUD
-// ═══════════════════════════════════════════════════
 function userQueueCol() {
   return collection(db, 'users', currentUser.uid, QUEUE_COL);
 }
@@ -434,9 +414,6 @@ function subscribeQueue() {
   });
 }
 
-// ═══════════════════════════════════════════════════
-// QUEUE WORKER
-// ═══════════════════════════════════════════════════
 function checkAndSchedule() {
   if (!isRunning) return;
   const sending = queueItems.find(i => i.status === 'sending');
@@ -471,13 +448,10 @@ async function processNext() {
   try {
     showToast(`⬇️ Memuat turun ${next.originalName}...`, '');
     const blob = await downloadBlob(next.url);
-
     showToast(`📤 Menghantar ${next.originalName}...`, '');
     await sendViaGmailAPI(s.kindleEmail, next.originalName, blob);
-
     await updateQueueItem(next.id, { status: 'sent', sentAt: Date.now(), error: null });
     showToast(`✅ Dihantar: ${next.originalName}`, 'ok');
-
   } catch (err) {
     const msg = err?.message || 'Ralat tidak diketahui';
     await updateQueueItem(next.id, { status: 'failed', error: msg });
@@ -491,6 +465,7 @@ function startQueue() {
   isRunning = true;
   nextSendAt = null;
   updateStatusUI(true);
+  setQueueRunning(true); // enable Cloud Function background
   checkAndSchedule();
 }
 
@@ -500,12 +475,10 @@ function stopQueue(showMsg = true) {
   queueTimer = null;
   clearCountdown();
   updateStatusUI(false);
+  setQueueRunning(false);
   if (showMsg) showToast('⏹ Queue dihentikan.', '');
 }
 
-// ═══════════════════════════════════════════════════
-// COUNTDOWN
-// ═══════════════════════════════════════════════════
 function startCountdownDisplay(item) {
   elCountdownPanel.style.display = 'block';
   elCountdownFile.textContent = `Seterusnya: ${item?.originalName || ''}`;
@@ -528,9 +501,6 @@ function clearCountdown() {
   elCountdownPanel.style.display = 'none';
 }
 
-// ═══════════════════════════════════════════════════
-// UI
-// ═══════════════════════════════════════════════════
 function updateStatusUI(running) {
   elBtnStart.style.display = running ? 'none' : 'flex';
   elBtnStop.style.display  = running ? 'flex'  : 'none';
@@ -546,24 +516,19 @@ function updateStats() {
 function renderQueue() {
   const total = queueItems.length;
   elQueueCount.textContent = `${total} fail`;
-
   if (total === 0) {
     elQueueEmpty.style.display = 'flex';
     elQueueList.style.display = 'none';
     elQueueList.innerHTML = '';
     return;
   }
-
   elQueueEmpty.style.display = 'none';
   elQueueList.style.display = 'flex';
-
   const existingIds = new Set([...elQueueList.querySelectorAll('.q-item')].map(el => el.dataset.id));
   const newIds = new Set(queueItems.map(i => i.id));
-
   for (const id of existingIds) {
     if (!newIds.has(id)) elQueueList.querySelector(`.q-item[data-id="${id}"]`)?.remove();
   }
-
   queueItems.forEach((item, idx) => {
     let el = elQueueList.querySelector(`.q-item[data-id="${item.id}"]`);
     if (!el) { el = buildItemEl(item); elQueueList.appendChild(el); }
@@ -607,27 +572,22 @@ function buildItemEl(item) {
 }
 
 function updateItemEl(el, item) {
-  el.dataset.id     = item.id;
+  el.dataset.id = item.id;
   el.dataset.status = item.status;
-
   el.querySelector('.q-item-name').textContent = item.originalName;
   el.querySelector('.q-item-size').textContent = `${item.sizeMB} MB`;
   el.querySelector('.q-item-time').textContent = timeAgo(item.addedAt);
-
   const map = { pending:'Menunggu', sending:'Menghantar', sent:'Selesai', failed:'Gagal' };
   const badge = el.querySelector('.q-badge');
   badge.textContent = map[item.status] || item.status;
   badge.className = `q-badge badge-${item.status}`;
-
   const ext = item.originalName?.split('.').pop().toLowerCase();
   el.querySelector('.q-item-icon').textContent = ext === 'epub' ? '📗' : '📄';
-
   const errEl  = el.querySelector('.q-item-error');
   const progEl = el.querySelector('.q-item-progress');
   const btnRem = el.querySelector('.btn-remove');
   const btnRet = el.querySelector('.btn-retry');
   const btnNow = el.querySelector('.btn-send-now');
-
   errEl.style.display  = (item.status === 'failed' && item.error) ? 'block' : 'none';
   if (item.error) errEl.textContent = `⚠️ ${item.error}`;
   progEl.style.display = item.status === 'sending' ? 'block' : 'none';
@@ -642,12 +602,10 @@ function setupItemEvents(el, item) {
     await deleteQueueItem(item.id);
     if (item.storagePath) await deleteFromStorage(item.storagePath);
   });
-
   el.querySelector('.btn-retry').addEventListener('click', async () => {
     await updateQueueItem(item.id, { status: 'pending', error: null });
     if (isRunning && !nextSendAt) checkAndSchedule();
   });
-
   el.querySelector('.btn-send-now').addEventListener('click', async () => {
     if (!isRunning) return;
     clearTimeout(queueTimer);
@@ -670,12 +628,8 @@ function timeAgo(ts) {
   return `${Math.floor(m / 60)} jam lalu`;
 }
 
-// ═══════════════════════════════════════════════════
-// UPLOAD
-// ═══════════════════════════════════════════════════
 async function uploadFiles(files) {
   if (!files || !files.length || !currentUser) return;
-
   const valid = [];
   for (const f of files) {
     const ext = f.name.split('.').pop().toLowerCase();
@@ -684,10 +638,8 @@ async function uploadFiles(files) {
     valid.push(f);
   }
   if (!valid.length) return;
-
   elUploadProgress.style.display = 'flex';
   let done = 0;
-
   for (const f of valid) {
     elUploadText.textContent = `Memuat naik ${f.name}...`;
     try {
@@ -706,16 +658,12 @@ async function uploadFiles(files) {
       showToast(`❌ Gagal upload: ${f.name}`, 'error');
     }
   }
-
   elUploadProgress.style.display = 'none';
   elUploadFill.style.width = '0%';
   elFileInput.value = '';
   if (done > 0) showToast(`✅ ${done} fail ditambah ke queue.`, 'ok');
 }
 
-// ═══════════════════════════════════════════════════
-// EVENT LISTENERS
-// ═══════════════════════════════════════════════════
 elBtnSignin.addEventListener('click', signIn);
 elBtnSignout.addEventListener('click', signOutUser);
 elBtnSave.addEventListener('click', saveSettings);
@@ -731,7 +679,6 @@ elBtnStart.addEventListener('click', async () => {
   const pending = queueItems.filter(i => i.status === 'pending').length;
   if (pending === 0) { showToast('⚠️ Tiada fail dalam queue.', 'error'); return; }
 
-  // Pastikan ada Gmail token — auto minta kalau tiada
   if (!accessToken) {
     showToast('🔐 Mengambil kebenaran Gmail...', '');
     try {
@@ -744,7 +691,7 @@ elBtnStart.addEventListener('click', async () => {
 
   saveSettings();
   startQueue();
-  showToast(`▶ Queue dimulakan. Selang: ${s.delayMinutes} minit.`, 'ok');
+  showToast(`▶ Queue dimulakan (boleh tutup tab jika Cloud Functions sudah setup). Selang: ${s.delayMinutes} min.`, 'ok', 5000);
 });
 
 elBtnStop.addEventListener('click', () => stopQueue(true));
@@ -759,7 +706,6 @@ elBtnClearSent.addEventListener('click', async () => {
 });
 
 elFileInput.addEventListener('change', () => uploadFiles(elFileInput.files));
-
 elDropzone.addEventListener('dragover', e => { e.preventDefault(); elDropzone.classList.add('drag-over'); });
 elDropzone.addEventListener('dragleave', e => { if (!elDropzone.contains(e.relatedTarget)) elDropzone.classList.remove('drag-over'); });
 elDropzone.addEventListener('drop', e => { e.preventDefault(); elDropzone.classList.remove('drag-over'); uploadFiles(e.dataTransfer.files); });
