@@ -50,6 +50,8 @@ let queueTimer      = null;
 let countdownInterval = null;
 let nextSendAt      = null;
 let unsubscribeQueue = null;
+let tokenClient     = null;
+let gmailReady      = false;
 
 // ─── DOM ───
 const $ = id => document.getElementById(id);
@@ -135,18 +137,95 @@ function getSettings() {
 }
 
 // ═══════════════════════════════════════════════════
-// GOOGLE AUTH + GMAIL TOKEN
+// GOOGLE AUTH + GMAIL TOKEN (auto-refresh)
 // ═══════════════════════════════════════════════════
 const provider = new GoogleAuthProvider();
 provider.addScope(GMAIL_SCOPE);
-provider.setCustomParameters({ access_type: 'online', prompt: 'consent' });
+provider.setCustomParameters({ access_type: 'online', prompt: 'select_account' });
+
+function waitForGis(timeoutMs = 8000) {
+  return new Promise((resolve, reject) => {
+    if (window.google?.accounts?.oauth2) return resolve();
+    const start = Date.now();
+    const t = setInterval(() => {
+      if (window.google?.accounts?.oauth2) {
+        clearInterval(t);
+        resolve();
+      } else if (Date.now() - start > timeoutMs) {
+        clearInterval(t);
+        reject(new Error('Google Identity Services tak load'));
+      }
+    }, 50);
+  });
+}
+
+function initTokenClient() {
+  if (tokenClient) return tokenClient;
+  if (!window.google?.accounts?.oauth2) return null;
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: GOOGLE_CLIENT_ID,
+    scope: GMAIL_SCOPE,
+    callback: () => {}, // diganti per-request
+  });
+  return tokenClient;
+}
+
+/** Minta Gmail access token. prompt: '' = cuba silent, 'consent' = paksa popup */
+function requestGmailToken(prompt = '') {
+  return new Promise(async (resolve, reject) => {
+    try {
+      await waitForGis();
+      const client = initTokenClient();
+      if (!client) return reject(new Error('Token client gagal init'));
+
+      client.callback = (resp) => {
+        if (resp.error) {
+          accessToken = null;
+          gmailReady = false;
+          reject(new Error(resp.error));
+          return;
+        }
+        accessToken = resp.access_token;
+        gmailReady = true;
+        resolve(accessToken);
+      };
+
+      client.requestAccessToken({ prompt });
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
+/** Cuba dapat token silently bila user sudah log masuk Firebase */
+async function trySilentGmailToken() {
+  if (accessToken) {
+    gmailReady = true;
+    return true;
+  }
+  try {
+    await requestGmailToken(''); // silent
+    showToast('✅ Gmail ready.', 'ok', 2000);
+    return true;
+  } catch (_) {
+    // Silent gagal — token akan diminta bila user tekan Mula Queue
+    gmailReady = false;
+    return false;
+  }
+}
 
 async function signIn() {
   try {
     const result = await signInWithPopup(auth, provider);
-    // Ambil access token untuk Gmail API
     const credential = GoogleAuthProvider.credentialFromResult(result);
-    accessToken = credential.accessToken;
+    if (credential?.accessToken) {
+      accessToken = credential.accessToken;
+      gmailReady = true;
+    }
+    // Pastikan ada token Gmail (fallback ke GIS)
+    if (!accessToken) {
+      try { await requestGmailToken('consent'); } catch (_) {}
+    }
     showToast('✅ Log masuk berjaya!', 'ok');
   } catch (err) {
     if (err.code === 'auth/popup-closed-by-user') return;
@@ -158,29 +237,32 @@ async function signOutUser() {
   stopQueue(false);
   if (unsubscribeQueue) { unsubscribeQueue(); unsubscribeQueue = null; }
   accessToken = null;
+  gmailReady = false;
+  // Revoke GIS token kalau ada
+  if (accessToken && window.google?.accounts?.oauth2) {
+    try { google.accounts.oauth2.revoke(accessToken); } catch (_) {}
+  }
   await signOut(auth);
   showToast('👋 Sudah log keluar.', '');
 }
 
-// Refresh token bila hampir tamat
 async function ensureToken() {
-  if (!accessToken || !currentUser) {
-    // Re-sign in untuk dapat token baru
+  if (accessToken) return accessToken;
+  // Cuba silent dulu, kemudian consent popup
+  try {
+    return await requestGmailToken('');
+  } catch (_) {
     try {
-      const result = await signInWithPopup(auth, provider);
-      const credential = GoogleAuthProvider.credentialFromResult(result);
-      accessToken = credential.accessToken;
-    } catch (_) {
-      throw new Error('Token Gmail tamat. Sila log masuk semula.');
+      return await requestGmailToken('consent');
+    } catch (err) {
+      throw new Error('Token Gmail diperlukan. Sila authorize Gmail.');
     }
   }
-  return accessToken;
 }
 
-onAuthStateChanged(auth, (user) => {
+onAuthStateChanged(auth, async (user) => {
   currentUser = user;
   if (user) {
-    // Tunjuk app
     elLoginScreen.style.display = 'none';
     elMainApp.style.display = 'grid';
     elUserInfo.style.display = 'flex';
@@ -190,13 +272,19 @@ onAuthStateChanged(auth, (user) => {
     elGmailSender.textContent = user.email;
     loadSettings();
     subscribeQueue();
+
+    // Auto-dapat Gmail token tanpa user klik log masuk lagi
+    if (!accessToken) {
+      await trySilentGmailToken();
+    }
   } else {
-    // Tunjuk login
     elLoginScreen.style.display = 'flex';
     elMainApp.style.display = 'none';
     elUserInfo.style.display = 'none';
     elGmailInfo.style.display = 'none';
     queueItems = [];
+    accessToken = null;
+    gmailReady = false;
   }
 });
 
@@ -206,11 +294,9 @@ onAuthStateChanged(auth, (user) => {
 async function sendViaGmailAPI(toEmail, fileName, fileBlob) {
   const token = await ensureToken();
 
-  // Encode fail ke base64
   const fileBase64 = await blobToBase64(fileBlob);
   const mimeType   = getMimeType(fileName);
 
-  // Bina e-mel MIME format
   const boundary = `boundary_${Date.now()}`;
   const emailLines = [
     `To: ${toEmail}`,
@@ -233,7 +319,6 @@ async function sendViaGmailAPI(toEmail, fileName, fileBlob) {
     `--${boundary}--`,
   ].join('\r\n');
 
-  // Encode kepada base64url
   const encodedEmail = btoa(unescape(encodeURIComponent(emailLines)))
     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
@@ -250,10 +335,10 @@ async function sendViaGmailAPI(toEmail, fileName, fileBlob) {
   );
 
   if (!response.ok) {
-    const err = await response.json();
-    // Token expired — clear dan throw
+    const err = await response.json().catch(() => ({}));
     if (response.status === 401) {
       accessToken = null;
+      gmailReady = false;
       throw new Error('Token Gmail tamat tempoh. Cuba semula.');
     }
     throw new Error(err.error?.message || `Gmail API error ${response.status}`);
@@ -266,7 +351,6 @@ function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
-      // Ambil bahagian base64 sahaja (buang prefix data:...)
       const base64 = reader.result.split(',')[1];
       resolve(base64);
     };
@@ -385,11 +469,9 @@ async function processNext() {
   await updateQueueItem(next.id, { status: 'sending' });
 
   try {
-    // Muat turun fail dari Firebase Storage
     showToast(`⬇️ Memuat turun ${next.originalName}...`, '');
     const blob = await downloadBlob(next.url);
 
-    // Hantar via Gmail API
     showToast(`📤 Menghantar ${next.originalName}...`, '');
     await sendViaGmailAPI(s.kindleEmail, next.originalName, blob);
 
@@ -571,7 +653,6 @@ function setupItemEvents(el, item) {
     clearTimeout(queueTimer);
     clearCountdown();
     nextSendAt = null;
-    // Gerak ke depan
     const firstPending = queueItems.find(i => i.status === 'pending');
     if (firstPending && firstPending.id !== item.id) {
       await updateQueueItem(item.id, { addedAt: firstPending.addedAt - 1 });
@@ -644,16 +725,23 @@ elBtnToggleSet.addEventListener('click', () => {
   elBtnToggleSet.textContent = c ? '▸' : '▾';
 });
 
-elBtnStart.addEventListener('click', () => {
-  if (!accessToken) {
-    showToast('⚠️ Sila log masuk semula untuk refresh token Gmail.', 'error', 5000);
-    signIn();
-    return;
-  }
+elBtnStart.addEventListener('click', async () => {
   const s = getSettings();
   if (!s.kindleEmail) { showToast('⚠️ Sila isi e-mel Kindle dahulu.', 'error'); return; }
   const pending = queueItems.filter(i => i.status === 'pending').length;
   if (pending === 0) { showToast('⚠️ Tiada fail dalam queue.', 'error'); return; }
+
+  // Pastikan ada Gmail token — auto minta kalau tiada
+  if (!accessToken) {
+    showToast('🔐 Mengambil kebenaran Gmail...', '');
+    try {
+      await ensureToken();
+    } catch (_) {
+      showToast('⚠️ Perlu authorize Gmail untuk menghantar.', 'error', 5000);
+      return;
+    }
+  }
+
   saveSettings();
   startQueue();
   showToast(`▶ Queue dimulakan. Selang: ${s.delayMinutes} minit.`, 'ok');
