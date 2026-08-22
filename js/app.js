@@ -103,7 +103,93 @@ function showToast(msg, type = '', dur = 3500) {
   toastTimer = setTimeout(() => elToast.classList.remove('show'), dur);
 }
 
-function loadSettings() {
+// ── Kindle Address Manager ──
+
+function kindleAddressCol() {
+  return collection(db, 'users', currentUser.uid, 'kindle_addresses');
+}
+
+function subscribeAddresses() {
+  if (!currentUser) return;
+  if (unsubscribeAddresses) unsubscribeAddresses();
+  unsubscribeAddresses = onSnapshot(
+    query(kindleAddressCol(), orderBy('createdAt', 'asc')),
+    snap => {
+      kindleAddresses = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      renderAddressList();
+      renderAddressDropdown();
+    },
+    () => {}
+  );
+}
+
+function renderAddressList() {
+  const container = document.getElementById('kindle-address-list');
+  if (!container) return;
+  if (kindleAddresses.length === 0) {
+    container.innerHTML = '<div style="font-size:0.75rem;color:var(--ink-faint);">Tiada alamat disimpan lagi.</div>';
+    return;
+  }
+  container.innerHTML = kindleAddresses.map(addr => `
+    <div class="kindle-address-item">
+      <div class="kindle-address-info">
+        <div class="kindle-address-label">${addr.label}</div>
+        <div class="kindle-address-email">${addr.email}</div>
+      </div>
+      <button class="kindle-address-use" onclick="useKindleAddress('${addr.email}')">Guna</button>
+      <button class="kindle-address-delete" onclick="deleteKindleAddress('${addr.id}')">✕</button>
+    </div>
+  `).join('');
+}
+
+function renderAddressDropdown() {
+  const select = document.getElementById('kindle-select');
+  if (!select) return;
+  const current = select.value;
+  select.innerHTML = '<option value="">-- Pilih alamat --</option>';
+  kindleAddresses.forEach(addr => {
+    const opt = document.createElement('option');
+    opt.value = addr.email;
+    opt.textContent = `${addr.label} — ${addr.email}`;
+    if (addr.email === current) opt.selected = true;
+    select.appendChild(opt);
+  });
+}
+
+window.useKindleAddress = function(email) {
+  document.getElementById('kindle-email').value = email;
+  const select = document.getElementById('kindle-select');
+  if (select) select.value = email;
+  showToast(`✅ Alamat dipilih: ${email}`, 'ok');
+};
+
+window.deleteKindleAddress = async function(id) {
+  try {
+    await deleteDoc(doc(kindleAddressCol(), id));
+    showToast('🗑️ Alamat dipadam.', '');
+  } catch (e) {
+    showToast('❌ Gagal padam.', 'error');
+  }
+};
+
+async function addKindleAddress() {
+  const label = document.getElementById('new-kindle-label').value.trim();
+  const email = document.getElementById('new-kindle-email').value.trim();
+  if (!label) { showToast('⚠️ Sila isi label.', 'error'); return; }
+  if (!email || !email.includes('@kindle.com')) { showToast('⚠️ Sila isi e-mel @kindle.com yang sah.', 'error'); return; }
+  try {
+    await setDoc(doc(kindleAddressCol()), {
+      label,
+      email,
+      createdAt: Date.now(),
+    });
+    document.getElementById('new-kindle-label').value = '';
+    document.getElementById('new-kindle-email').value = '';
+    showToast('✅ Alamat ditambah!', 'ok');
+  } catch (e) {
+    showToast('❌ Gagal tambah alamat.', 'error');
+  }
+}
   try {
     const s = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
     elKindleEmail.value  = s.kindleEmail  || '';
@@ -294,6 +380,7 @@ async function signOutUser() {
   stopQueue(false);
   if (unsubscribeQueue) { unsubscribeQueue(); unsubscribeQueue = null; }
   if (unsubscribeSettings) { unsubscribeSettings(); unsubscribeSettings = null; }
+  if (unsubscribeAddresses) { unsubscribeAddresses(); unsubscribeAddresses = null; }
   accessToken = null;
   gmailReady = false;
   await signOut(auth);
@@ -326,6 +413,7 @@ onAuthStateChanged(auth, async (user) => {
     loadSettings();
     subscribeQueue();
     subscribeSettings();
+    subscribeAddresses();
     await restoreQueueState();
     if (!accessToken) await trySilentGmailToken();
   } else {
@@ -724,6 +812,12 @@ async function uploadFiles(files) {
 }
 
 elBtnSignin.addEventListener('click', signIn);
+document.getElementById('btn-add-kindle').addEventListener('click', addKindleAddress);
+document.getElementById('kindle-select').addEventListener('change', function() {
+  if (this.value) {
+    document.getElementById('kindle-email').value = this.value;
+  }
+});
 elBtnSignout.addEventListener('click', signOutUser);
 elBtnSave.addEventListener('click', saveSettings);
 
