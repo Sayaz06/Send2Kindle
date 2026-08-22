@@ -677,5 +677,5 @@ elDropzone.addEventListener('dragleave', e => { if (!elDropzone.contains(e.relat
 elDropzone.addEventListener('drop', e => { e.preventDefault(); elDropzone.classList.remove('drag-over'); uploadFiles(e.dataTransfer.files); });
 
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
 }

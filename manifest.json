@@ -3,9 +3,10 @@
   "short_name": "KindleQ",
   "description": "Hantar PDF/EPUB ke Kindle secara beratur menggunakan Gmail API",
   "start_url": "./",
+  "scope": "./",
   "display": "standalone",
   "background_color": "#0f0f11",
   "theme_color": "#0f0f11",
-  "icons": [{ "src": "./icons/icon.svg", "sizes": "any", "type": "image/svg+xml" }],
+  "icons": [{ "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }],
   "lang": "ms"
 }
