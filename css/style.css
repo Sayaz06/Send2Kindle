@@ -187,3 +187,13 @@ a{color:var(--accent);}
 .kindle-address-delete:hover{color:var(--red);background:var(--red-dim);}
 .kindle-add-row{display:flex;flex-direction:column;gap:8px;margin-top:4px;}
 .kindle-add-row .btn{align-self:flex-start;}
+
+/* ─── Log Duplikat ─── */
+.log-item{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid var(--border);gap:12px;}
+.log-item:last-child{border-bottom:none;}
+.log-item-info{display:flex;flex-direction:column;gap:3px;flex:1;min-width:0;}
+.log-item-name{font-size:0.82rem;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink);}
+.log-item-reason{font-size:0.72rem;color:var(--ink-sub);font-family:var(--font-mono);}
+.log-item-time{font-size:0.7rem;color:var(--ink-faint);font-family:var(--font-mono);white-space:nowrap;}
+.log-item-delete{background:none;border:none;color:var(--ink-faint);cursor:pointer;padding:3px 6px;border-radius:var(--radius-sm);font-size:0.85rem;transition:all 0.15s;}
+.log-item-delete:hover{color:var(--red);background:var(--red-dim);}
