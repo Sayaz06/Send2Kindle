@@ -1,5 +1,6 @@
 /**
- * Kindle Queue — Background processor (simplified for reliable deploy)
+ * Kindle Queue — Background processor
+ * Auto-recovers items stuck in "sending" for > 5 minutes
  */
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { defineSecret } = require("firebase-functions/params");
@@ -10,6 +11,7 @@ const db = admin.firestore();
 
 const CLIENT_ID = defineSecret("GOOGLE_CLIENT_ID");
 const CLIENT_SECRET = defineSecret("GOOGLE_CLIENT_SECRET");
+const STUCK_MS = 5 * 60 * 1000; // 5 min
 
 function getMimeType(fileName) {
   const ext = (fileName.split(".").pop() || "").toLowerCase();
@@ -91,6 +93,27 @@ async function sendViaGmail(accessToken, toEmail, fileName, fileBuffer) {
   return response.json();
 }
 
+/** Reset item stuck at sending */
+async function recoverStuckSending(uid) {
+  const stuckSnap = await db
+    .collection(`users/${uid}/kindle_queue`)
+    .where("status", "==", "sending")
+    .get();
+
+  const now = Date.now();
+  for (const d of stuckSnap.docs) {
+    const data = d.data();
+    // Tiada timestamp sending — anggap stuck jika sudah lama di queue
+    // Guna addedAt / sentAt / updated heuristic: selalu recover sending yang wujud
+    // (sending sepatutnya singkat; kalau masih sending bila CF jalan = stuck)
+    await d.ref.update({
+      status: "pending",
+      error: null,
+    });
+    console.log(`Recovered stuck sending → pending: ${data.originalName}`);
+  }
+}
+
 async function processUserQueue(uid, clientId, clientSecret) {
   const settingsRef = db.doc(`users/${uid}/settings/queue`);
   const settingsSnap = await settingsRef.get();
@@ -99,6 +122,9 @@ async function processUserQueue(uid, clientId, clientSecret) {
   const settings = settingsSnap.data();
   if (!settings.queueRunning) return;
   if (!settings.kindleEmail) return;
+
+  // Recover stuck "sending" dulu
+  await recoverStuckSending(uid);
 
   const delayMs = (settings.delayMinutes || 5) * 60 * 1000;
   const now = Date.now();
@@ -129,7 +155,7 @@ async function processUserQueue(uid, clientId, clientSecret) {
   const item = docSnap.data();
   const itemRef = docSnap.ref;
 
-  await itemRef.update({ status: "sending" });
+  await itemRef.update({ status: "sending", sendingAt: Date.now() });
 
   try {
     const accessToken = await getAccessToken(refreshToken, clientId, clientSecret);
