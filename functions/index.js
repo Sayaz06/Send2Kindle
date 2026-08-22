@@ -62,7 +62,7 @@ async function sendViaGmail(accessToken, toEmail, fileName, fileBuffer) {
 
   const emailLines = [
     `To: ${toEmail}`,
-    `Subject: Convert`,
+    `Subject: `,
     `MIME-Version: 1.0`,
     `Content-Type: multipart/mixed; boundary="${boundary}"`,
     ``,
