@@ -860,7 +860,16 @@ elBtnStart.addEventListener('click', async () => {
 
 elBtnStop.addEventListener('click', () => stopQueue(true));
 
-elBtnClearSent.addEventListener('click', async () => {
+document.getElementById('btn-sort-az').addEventListener('click', async () => {
+  const pending = queueItems.filter(i => i.status === 'pending');
+  if (pending.length === 0) { showToast('⚠️ Tiada fail pending untuk disusun.', 'error'); return; }
+  const sorted = [...pending].sort((a, b) => a.originalName.localeCompare(b.originalName));
+  const baseTime = Date.now();
+  for (let i = 0; i < sorted.length; i++) {
+    await updateQueueItem(sorted[i].id, { addedAt: baseTime + i });
+  }
+  showToast('✅ Queue disusun A-Z!', 'ok');
+});
   const toDelete = queueItems.filter(i => i.status === 'sent' || i.status === 'failed');
   for (const item of toDelete) {
     await deleteQueueItem(item.id);
