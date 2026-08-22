@@ -1,4 +1,4 @@
-const CACHE = 'kindle-queue-v2';
+const CACHE = 'kindle-queue-v3';
 const ASSETS = ['./', './index.html', './css/style.css', './manifest.json', './icons/icon.svg'];
 
 self.addEventListener('install', e => {
@@ -11,5 +11,5 @@ self.addEventListener('activate', e => {
 });
 self.addEventListener('fetch', e => {
   if (e.request.url.includes('firebase') || e.request.url.includes('google') || e.request.url.includes('googleapis')) return;
-  e.respondWith(caches.match(e.request).then(c => c || fetch(e.request).catch(() => caches.match('/index.html'))));
+  e.respondWith(caches.match(e.request).then(c => c || fetch(e.request).catch(() => caches.match('./index.html'))));
 });
