@@ -71,10 +71,29 @@
         <div id="settings-body" class="card-body">
           <div class="settings-group">
             <div class="settings-group-label">📱 Kindle</div>
-            <div class="field">
-              <label class="field-label">E-mel Kindle Sasaran</label>
-              <input class="field-input" id="kindle-email" type="email" placeholder="nama@kindle.com" />
-            </div>
+<div class="field">
+  <label class="field-label">E-mel Kindle Sasaran</label>
+  <input class="field-input" id="kindle-email" type="email" placeholder="nama@kindle.com" />
+</div>
+
+<div class="field">
+  <label class="field-label">Senarai Alamat Kindle
+    <span class="field-hint">simpan berbilang alamat</span>
+  </label>
+  <div id="kindle-address-list" class="kindle-address-list"></div>
+  <div class="kindle-add-row">
+    <input class="field-input" id="new-kindle-label" type="text" placeholder="Label (contoh: Kindle E-reader)" />
+    <input class="field-input" id="new-kindle-email" type="email" placeholder="nama@kindle.com" />
+    <button id="btn-add-kindle" class="btn btn-primary">+ Tambah</button>
+  </div>
+</div>
+
+<div class="field">
+  <label class="field-label">Pilih Alamat Kindle</label>
+  <select class="field-input" id="kindle-select">
+    <option value="">-- Pilih alamat --</option>
+  </select>
+</div>
             <div class="field">
               <label class="field-label">
                 Selang Penghantaran
