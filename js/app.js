@@ -105,6 +105,41 @@ function showToast(msg, type = '', dur = 3500) {
 
 // ── Kindle Address Manager ──
 
+// ── Log Duplikat ──
+let skipLog = [];
+
+function addToLog(fileName, reason) {
+  const item = { id: Date.now() + Math.random(), fileName, reason, time: Date.now() };
+  skipLog.unshift(item);
+  renderLog();
+  document.getElementById('log-section').style.display = 'block';
+}
+
+function renderLog() {
+  const list = document.getElementById('log-list');
+  if (!list) return;
+  if (skipLog.length === 0) {
+    document.getElementById('log-section').style.display = 'none';
+    list.innerHTML = '';
+    return;
+  }
+  list.innerHTML = skipLog.map(item => `
+    <div class="log-item" data-log-id="${item.id}">
+      <div class="log-item-info">
+        <div class="log-item-name">📄 ${item.fileName}</div>
+        <div class="log-item-reason">⚠️ ${item.reason}</div>
+      </div>
+      <div class="log-item-time">${timeAgo(item.time)}</div>
+      <button class="log-item-delete" onclick="deleteLogItem(${item.id})">✕</button>
+    </div>
+  `).join('');
+}
+
+window.deleteLogItem = function(id) {
+  skipLog = skipLog.filter(i => i.id !== id);
+  renderLog();
+};
+
 function kindleAddressCol() {
   return collection(db, 'users', currentUser.uid, 'kindle_addresses');
 }
@@ -801,7 +836,8 @@ async function uploadFiles(files) {
   for (const f of valid) {
     const isDuplicate = queueItems.some(i => i.originalName === f.name && i.status !== 'sent');
     if (isDuplicate) {
-      showToast(`⚠️ Dah ada dalam queue: ${f.name}`, 'error');
+      showToast(`⚠️ Diskip: ${f.name}`, 'error', 4000);
+      setTimeout(() => addToLog(f.name, 'Nama fail dah ada dalam queue'), 4000);
       continue;
     }
     elUploadText.textContent = `Memuat naik ${f.name}...`;
@@ -876,7 +912,11 @@ document.getElementById('btn-sort-az').addEventListener('click', async () => {
   showToast('✅ Queue disusun A-Z!', 'ok');
 });
 
-elBtnClearSent.addEventListener('click', async () => {
+document.getElementById('btn-clear-log').addEventListener('click', () => {
+  skipLog = [];
+  renderLog();
+  showToast('🗑️ Log dibersihkan.', 'ok');
+});
   const toDelete = queueItems.filter(i => i.status === 'sent' || i.status === 'failed');
   for (const item of toDelete) {
     await deleteQueueItem(item.id);
