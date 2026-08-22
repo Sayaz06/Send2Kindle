@@ -917,6 +917,8 @@ document.getElementById('btn-clear-log').addEventListener('click', () => {
   renderLog();
   showToast('🗑️ Log dibersihkan.', 'ok');
 });
+
+elBtnClearSent.addEventListener('click', async () => {
   const toDelete = queueItems.filter(i => i.status === 'sent' || i.status === 'failed');
   for (const item of toDelete) {
     await deleteQueueItem(item.id);
