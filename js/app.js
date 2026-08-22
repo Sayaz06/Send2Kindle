@@ -1,7 +1,7 @@
 // ═══════════════════════════════════════════════════
 // Kindle Queue Manager
-// Firebase Auth (Google) + Firebase Storage + Firestore + Gmail API
-// Background queue via Cloud Functions (see BACKGROUND_SETUP.md)
+// Firebase Auth + Storage + Firestore + Gmail API
+// Background queue via Cloud Functions
 // ═══════════════════════════════════════════════════
 
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
@@ -10,7 +10,7 @@ import {
   GoogleAuthProvider, onAuthStateChanged
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
 import {
-  getFirestore, collection, doc, onSnapshot,
+  getFirestore, collection, doc, onSnapshot, getDoc,
   setDoc, updateDoc, deleteDoc, query, orderBy
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import {
@@ -18,7 +18,6 @@ import {
   uploadBytesResumable, getDownloadURL, deleteObject
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js';
 
-// ─── Firebase Config ───
 const firebaseConfig = {
   apiKey:            "AIzaSyAGLX_xxH_dQ06epX4XCXtuSHN0DwZFMjA",
   authDomain:        "stress-auti-action.firebaseapp.com",
@@ -41,12 +40,14 @@ const STORAGE_KEY = 'kindle_queue_settings';
 
 let currentUser     = null;
 let accessToken     = null;
-let isRunning       = false;
+let isRunning       = false;   // UI + flag (true = queue aktif, sama ada local atau background)
+let clientWorker    = false;   // true = browser sendiri yang hantar (timer local)
 let queueItems      = [];
 let queueTimer      = null;
 let countdownInterval = null;
 let nextSendAt      = null;
 let unsubscribeQueue = null;
+let unsubscribeSettings = null;
 let tokenClient     = null;
 let gmailReady      = false;
 
@@ -115,7 +116,6 @@ function saveSettings() {
     return false;
   }
   localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
-  // Sync ke Firestore untuk Cloud Function
   if (currentUser) {
     setDoc(doc(db, 'users', currentUser.uid, 'settings', 'queue'), {
       kindleEmail: s.kindleEmail,
@@ -135,7 +135,6 @@ function getSettings() {
   };
 }
 
-/** Flag background queue untuk Cloud Function */
 async function setQueueRunning(running) {
   if (!currentUser) return;
   const s = getSettings();
@@ -151,6 +150,50 @@ async function setQueueRunning(running) {
   } catch (e) {
     console.warn('setQueueRunning failed', e);
   }
+}
+
+/** Baca status queue dari Firestore (bila buka app semula) */
+async function restoreQueueState() {
+  if (!currentUser) return;
+  try {
+    const snap = await getDoc(doc(db, 'users', currentUser.uid, 'settings', 'queue'));
+    if (snap.exists() && snap.data().queueRunning === true) {
+      isRunning = true;
+      clientWorker = false; // biar Cloud Function yang hantar
+      updateStatusUI(true);
+      showToast('▶ Queue masih aktif di background.', 'ok', 4000);
+    } else {
+      isRunning = false;
+      clientWorker = false;
+      updateStatusUI(false);
+    }
+  } catch (e) {
+    console.warn('restoreQueueState', e);
+  }
+}
+
+/** Live sync button bila Cloud Function ubah queueRunning */
+function subscribeSettings() {
+  if (!currentUser) return;
+  if (unsubscribeSettings) unsubscribeSettings();
+  unsubscribeSettings = onSnapshot(
+    doc(db, 'users', currentUser.uid, 'settings', 'queue'),
+    (snap) => {
+      if (!snap.exists()) return;
+      const running = snap.data().queueRunning === true;
+      // Jangan override jika client worker sedang aktif
+      if (clientWorker) return;
+      if (running !== isRunning) {
+        isRunning = running;
+        updateStatusUI(running);
+        if (!running) {
+          clearCountdown();
+          showToast('✅ Queue background selesai / dihentikan.', 'ok', 4000);
+        }
+      }
+    },
+    () => {}
+  );
 }
 
 const provider = new GoogleAuthProvider();
@@ -241,6 +284,7 @@ async function signIn() {
 async function signOutUser() {
   stopQueue(false);
   if (unsubscribeQueue) { unsubscribeQueue(); unsubscribeQueue = null; }
+  if (unsubscribeSettings) { unsubscribeSettings(); unsubscribeSettings = null; }
   accessToken = null;
   gmailReady = false;
   await signOut(auth);
@@ -272,6 +316,8 @@ onAuthStateChanged(auth, async (user) => {
     elGmailSender.textContent = user.email;
     loadSettings();
     subscribeQueue();
+    subscribeSettings();
+    await restoreQueueState();
     if (!accessToken) await trySilentGmailToken();
   } else {
     elLoginScreen.style.display = 'flex';
@@ -281,6 +327,8 @@ onAuthStateChanged(auth, async (user) => {
     queueItems = [];
     accessToken = null;
     gmailReady = false;
+    isRunning = false;
+    clientWorker = false;
   }
 });
 
@@ -410,12 +458,13 @@ function subscribeQueue() {
     queueItems = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderQueue();
     updateStats();
-    if (isRunning) checkAndSchedule();
+    // Hanya client worker yang schedule local; background mode biar CF
+    if (isRunning && clientWorker) checkAndSchedule();
   });
 }
 
 function checkAndSchedule() {
-  if (!isRunning) return;
+  if (!isRunning || !clientWorker) return;
   const sending = queueItems.find(i => i.status === 'sending');
   if (sending) return;
 
@@ -436,7 +485,7 @@ function checkAndSchedule() {
 }
 
 async function processNext() {
-  if (!isRunning) return;
+  if (!isRunning || !clientWorker) return;
   clearCountdown();
 
   const next = queueItems.find(i => i.status === 'pending');
@@ -458,19 +507,21 @@ async function processNext() {
     showToast(`❌ Gagal: ${next.originalName}`, 'error', 5000);
   }
 
-  if (isRunning) { nextSendAt = null; checkAndSchedule(); }
+  if (isRunning && clientWorker) { nextSendAt = null; checkAndSchedule(); }
 }
 
 function startQueue() {
   isRunning = true;
+  clientWorker = true; // tab ni juga process (plus CF background)
   nextSendAt = null;
   updateStatusUI(true);
-  setQueueRunning(true); // enable Cloud Function background
+  setQueueRunning(true);
   checkAndSchedule();
 }
 
 function stopQueue(showMsg = true) {
   isRunning = false;
+  clientWorker = false;
   clearTimeout(queueTimer);
   queueTimer = null;
   clearCountdown();
@@ -593,7 +644,7 @@ function updateItemEl(el, item) {
   progEl.style.display = item.status === 'sending' ? 'block' : 'none';
   btnRem.style.display = item.status === 'sending' ? 'none' : 'inline-flex';
   btnRet.style.display = item.status === 'failed'  ? 'inline-flex' : 'none';
-  btnNow.style.display = (item.status === 'pending' && isRunning) ? 'inline-flex' : 'none';
+  btnNow.style.display = (item.status === 'pending' && isRunning && clientWorker) ? 'inline-flex' : 'none';
 }
 
 function setupItemEvents(el, item) {
@@ -604,10 +655,10 @@ function setupItemEvents(el, item) {
   });
   el.querySelector('.btn-retry').addEventListener('click', async () => {
     await updateQueueItem(item.id, { status: 'pending', error: null });
-    if (isRunning && !nextSendAt) checkAndSchedule();
+    if (isRunning && clientWorker && !nextSendAt) checkAndSchedule();
   });
   el.querySelector('.btn-send-now').addEventListener('click', async () => {
-    if (!isRunning) return;
+    if (!isRunning || !clientWorker) return;
     clearTimeout(queueTimer);
     clearCountdown();
     nextSendAt = null;
@@ -691,7 +742,7 @@ elBtnStart.addEventListener('click', async () => {
 
   saveSettings();
   startQueue();
-  showToast(`▶ Queue dimulakan (boleh tutup tab jika Cloud Functions sudah setup). Selang: ${s.delayMinutes} min.`, 'ok', 5000);
+  showToast(`▶ Queue dimulakan (boleh tutup tab). Selang: ${s.delayMinutes} min.`, 'ok', 5000);
 });
 
 elBtnStop.addEventListener('click', () => stopQueue(true));
