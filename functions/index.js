@@ -168,14 +168,14 @@ async function processUserQueue(uid, clientId, clientSecret) {
       .orderBy("addedAt", "asc")
       .limit(1)
       .get();
-} catch (idxErr) {
-  console.warn("orderBy index missing, fallback:", idxErr.message);
-  queueSnap = await db
-    .collection(`users/${uid}/kindle_queue`)
-    .where("status", "==", "pending")
-    .limit(5)
-    .get();
-}
+  } catch (idxErr) {
+    console.warn("orderBy index missing, fallback:", idxErr.message);
+    queueSnap = await db
+      .collection(`users/${uid}/kindle_queue`)
+      .where("status", "==", "pending")
+      .limit(5)
+      .get();
+  }
 
   if (queueSnap.empty) {
     await settingsRef.update({ queueRunning: false, nextSendAt: null });
