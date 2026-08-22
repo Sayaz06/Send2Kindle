@@ -160,22 +160,13 @@ async function processUserQueue(uid, clientId, clientSecret) {
   const { refreshToken } = secretSnap.data();
   console.log(`refreshToken found: ${refreshToken.slice(0, 10)}...`);
 
-  let queueSnap;
-  try {
-    queueSnap = await db
-      .collection(`users/${uid}/kindle_queue`)
-      .where("status", "==", "pending")
-      .orderBy("addedAt", "asc")
-      .limit(1)
-      .get();
-  } catch (idxErr) {
-    console.warn("orderBy index missing, fallback:", idxErr.message);
-    queueSnap = await db
-      .collection(`users/${uid}/kindle_queue`)
-      .where("status", "==", "pending")
-      .limit(5)
-      .get();
-  }
+  // Index dah wujud — orderBy selamat digunakan terus
+  const queueSnap = await db
+    .collection(`users/${uid}/kindle_queue`)
+    .where("status", "==", "pending")
+    .orderBy("addedAt", "asc")
+    .limit(1)
+    .get();
 
   if (queueSnap.empty) {
     await settingsRef.update({ queueRunning: false, nextSendAt: null });
@@ -184,12 +175,11 @@ async function processUserQueue(uid, clientId, clientSecret) {
     return;
   }
 
-  const docs = queueSnap.docs.slice().sort((a, b) => (a.data().addedAt || 0) - (b.data().addedAt || 0));
-  const docSnap = docs[0];
+  const docSnap = queueSnap.docs[0];
   const item = docSnap.data();
   const itemRef = docSnap.ref;
 
-  console.log(`Processing item: ${item.originalName}`);
+  console.log(`Processing item: ${item.originalName}, addedAt: ${item.addedAt}`);
   await itemRef.update({ status: "sending", sendingAt: Date.now() });
 
   try {
