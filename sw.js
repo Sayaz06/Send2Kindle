@@ -1,4 +1,4 @@
-const CACHE = 'kindle-queue-v7';
+const CACHE = 'kindle-queue-v8';
 const ASSETS = ['./', './index.html', './css/style.css', './manifest.json', './icons/icon.svg', './js/app.js'];
 
 self.addEventListener('install', e => {
