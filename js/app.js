@@ -190,6 +190,8 @@ async function addKindleAddress() {
     showToast('❌ Gagal tambah alamat.', 'error');
   }
 }
+
+function loadSettings() {
   try {
     const s = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
     elKindleEmail.value  = s.kindleEmail  || '';
