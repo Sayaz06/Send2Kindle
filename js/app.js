@@ -48,6 +48,8 @@ let countdownInterval = null;
 let nextSendAt      = null;
 let unsubscribeQueue = null;
 let unsubscribeSettings = null;
+let kindleAddresses = [];
+let unsubscribeAddresses = null;
 let tokenClient     = null;
 let gmailReady      = false;
 
