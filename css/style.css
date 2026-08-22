@@ -175,4 +175,15 @@ a{color:var(--accent);}
 ::-webkit-scrollbar-track{background:transparent;}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:999px;}
 @media(max-width:500px){.stats-row{grid-template-columns:repeat(2,1fr);}.countdown-display{font-size:1.8rem;}.brand-sub{display:none;}}
-@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:0.01ms!important;transition-duration:0.01ms!important;}}
+/* ─── Kindle Address Manager ─── */
+.kindle-address-list{display:flex;flex-direction:column;gap:8px;margin-bottom:8px;}
+.kindle-address-item{display:flex;align-items:center;gap:10px;background:var(--bg-card-alt);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;}
+.kindle-address-info{display:flex;flex-direction:column;gap:2px;flex:1;min-width:0;}
+.kindle-address-label{font-size:0.8rem;font-weight:600;color:var(--ink);}
+.kindle-address-email{font-size:0.72rem;color:var(--ink-sub);font-family:var(--font-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.kindle-address-use{font-size:0.75rem;padding:4px 10px;border-radius:999px;border:1px solid rgba(232,184,109,0.3);background:var(--accent-dim);color:var(--accent);cursor:pointer;white-space:nowrap;transition:all 0.15s;font-family:var(--font-sans);}
+.kindle-address-use:hover{background:rgba(232,184,109,0.25);}
+.kindle-address-delete{font-size:0.8rem;padding:4px 8px;border-radius:var(--radius-sm);border:none;background:transparent;color:var(--ink-faint);cursor:pointer;transition:all 0.15s;}
+.kindle-address-delete:hover{color:var(--red);background:var(--red-dim);}
+.kindle-add-row{display:flex;flex-direction:column;gap:8px;margin-top:4px;}
+.kindle-add-row .btn{align-self:flex-start;}
