@@ -40,8 +40,8 @@ const STORAGE_KEY = 'kindle_queue_settings';
 
 let currentUser     = null;
 let accessToken     = null;
-let isRunning       = false;   // UI + flag (true = queue aktif, sama ada local atau background)
-let clientWorker    = false;   // true = browser sendiri yang hantar (timer local)
+let isRunning       = false;
+let clientWorker    = false;
 let queueItems      = [];
 let queueTimer      = null;
 let countdownInterval = null;
@@ -147,19 +147,28 @@ async function setQueueRunning(running) {
       nextSendAt: running ? Date.now() : null,
       updatedAt: Date.now(),
     }, { merge: true });
+
+    // Flag untuk Cloud Function (elak collectionGroup index)
+    if (running) {
+      await setDoc(doc(db, 'active_queues', currentUser.uid), {
+        running: true,
+        updatedAt: Date.now(),
+      });
+    } else {
+      await deleteDoc(doc(db, 'active_queues', currentUser.uid)).catch(() => {});
+    }
   } catch (e) {
     console.warn('setQueueRunning failed', e);
   }
 }
 
-/** Baca status queue dari Firestore (bila buka app semula) */
 async function restoreQueueState() {
   if (!currentUser) return;
   try {
     const snap = await getDoc(doc(db, 'users', currentUser.uid, 'settings', 'queue'));
     if (snap.exists() && snap.data().queueRunning === true) {
       isRunning = true;
-      clientWorker = false; // biar Cloud Function yang hantar
+      clientWorker = false;
       updateStatusUI(true);
       showToast('▶ Queue masih aktif di background.', 'ok', 4000);
     } else {
@@ -172,7 +181,6 @@ async function restoreQueueState() {
   }
 }
 
-/** Live sync button bila Cloud Function ubah queueRunning */
 function subscribeSettings() {
   if (!currentUser) return;
   if (unsubscribeSettings) unsubscribeSettings();
@@ -181,7 +189,6 @@ function subscribeSettings() {
     (snap) => {
       if (!snap.exists()) return;
       const running = snap.data().queueRunning === true;
-      // Jangan override jika client worker sedang aktif
       if (clientWorker) return;
       if (running !== isRunning) {
         isRunning = running;
@@ -458,7 +465,6 @@ function subscribeQueue() {
     queueItems = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderQueue();
     updateStats();
-    // Hanya client worker yang schedule local; background mode biar CF
     if (isRunning && clientWorker) checkAndSchedule();
   });
 }
@@ -512,7 +518,7 @@ async function processNext() {
 
 function startQueue() {
   isRunning = true;
-  clientWorker = true; // tab ni juga process (plus CF background)
+  clientWorker = true;
   nextSendAt = null;
   updateStatusUI(true);
   setQueueRunning(true);
