@@ -2498,9 +2498,10 @@ function escHtml(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
-// ─── LocalStorage ─────────────────────────────────────────
+// ─── LocalStorage + Firestore session ─────────────────────
 const LS_KEY = 'tg_bridge_creds';
-const LS_SESSION = 'tg_session_string';
+let currentUser = null;
+
 function saveCreds() {
   localStorage.setItem(LS_KEY, JSON.stringify({
     apiId: $('inp-api-id').value.trim(),
@@ -2515,6 +2516,23 @@ function loadCreds() {
     if (d.apiHash) $('inp-api-hash').value = d.apiHash;
     if (d.phone) $('inp-phone').value = d.phone;
   } catch(e) {}
+}
+async function saveSessionToFirestore(sessionStr) {
+  if (!currentUser) return;
+  try {
+    await db.doc('users/' + currentUser.uid + '/tg_session/main').set({ session: sessionStr, updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
+  } catch(e) { console.warn('Save session err:', e); }
+}
+async function loadSessionFromFirestore() {
+  if (!currentUser) return '';
+  try {
+    const snap = await db.doc('users/' + currentUser.uid + '/tg_session/main').get();
+    return snap.exists ? (snap.data().session || '') : '';
+  } catch(e) { return ''; }
+}
+async function clearSessionFromFirestore() {
+  if (!currentUser) return;
+  try { await db.doc('users/' + currentUser.uid + '/tg_session/main').delete(); } catch(e) {}
 }
 
 // ─── GramJS state ─────────────────────────────────────────
@@ -2547,7 +2565,7 @@ async function connectTelegram() {
     const { StringSession } = window.telegram.sessions;
     const { NewMessage } = window.telegram.events;
 
-    const sessionStr = localStorage.getItem(LS_SESSION) || '';
+    const sessionStr = await loadSessionFromFirestore() || localStorage.getItem('tg_session_backup') || '';
     const session = new StringSession(sessionStr);
 
     tgClient = new TelegramClient(session, apiId, apiHash, {
@@ -2570,7 +2588,9 @@ async function connectTelegram() {
       onError: err => addLog('Ralat: ' + err.message, 'err')
     });
 
-    localStorage.setItem(LS_SESSION, tgClient.session.save());
+    const sessionStr = tgClient.session.save();
+    localStorage.setItem('tg_session_backup', sessionStr);
+    await saveSessionToFirestore(sessionStr);
     tgMe = await tgClient.getMe();
     addLog('Berjaya: @' + (tgMe.username || tgMe.firstName), 'ok');
 
@@ -2784,18 +2804,34 @@ $('btn-disconnect').onclick = () => {
   $('main-section').style.display = 'none';
   addLog('Putus sambungan.', 'info');
 };
-$('btn-clear-session').onclick = () => {
+$('btn-clear-session').onclick = async () => {
   if (!confirm('Padam session?')) return;
-  localStorage.removeItem(LS_SESSION);
+  localStorage.removeItem('tg_session_backup');
+  await clearSessionFromFirestore();
   toast('Session dipadam. Log masuk semula.');
 };
 
-// ─── Init ─────────────────────────────────────────────────
-loadCreds();
-if (localStorage.getItem(LS_SESSION)) {
-  addLog('Session lama ditemui. Tekan Sambung untuk reconnect.', 'info');
-  $('btn-connect').textContent = '⚡ Sambung Semula';
-}
+// ─── Firebase Auth + Auto-reconnect ───────────────────────
+firebase.auth().onAuthStateChanged(async (user) => {
+  currentUser = user;
+  if (!user) {
+    // Auto login dengan Google
+    const provider = new firebase.auth.GoogleAuthProvider();
+    firebase.auth().signInWithPopup(provider).catch(e => addLog('Auth gagal: ' + e.message, 'err'));
+    return;
+  }
+  addLog('Firebase auth: ' + user.email, 'ok');
+  loadCreds();
+
+  // Auto-reconnect jika ada session tersimpan
+  const savedSession = await loadSessionFromFirestore() || localStorage.getItem('tg_session_backup') || '';
+  if (savedSession) {
+    addLog('Session ditemui. Auto-reconnect...', 'info');
+    $('btn-connect').textContent = '⚡ Sambung Semula';
+    // Auto connect
+    setTimeout(() => connectTelegram(), 500);
+  }
+});
 </script>
 </body>
 </html>
