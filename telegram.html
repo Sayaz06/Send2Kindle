@@ -2645,6 +2645,32 @@ async function connectTelegram() {
 
     addLog('Monitoring mesej baru aktif.', 'ok');
 
+    // ─── Monitor outbox dari Kindle ───────────────────────
+    db.collection('tg_messages').get().then(async (snap) => {
+      snap.forEach((chatDoc) => {
+        const chatId = chatDoc.id;
+        db.collection('tg_messages').doc(chatId).collection('outbox')
+          .onSnapshot(async (outSnap) => {
+            for (const change of outSnap.docChanges()) {
+              if (change.type !== 'added') continue;
+              const data = change.doc.data();
+              if (!data.text) continue;
+              try {
+                const dlg = allDialogs.find(d => d.entity && d.entity.id && d.entity.id.toString() === chatId);
+                if (!dlg) { addLog('Peer tidak jumpa untuk chatId: ' + chatId, 'err'); continue; }
+                const result = await tgClient.sendMessage(dlg.entity, { message: data.text });
+                appendMsgBubble(result);
+                await saveMsg(result, chatId, data.chatName || chatId);
+                await change.doc.ref.delete();
+                addLog('Relay dari Kindle: "' + data.text.substring(0,30) + '"', 'ok');
+              } catch(e) {
+                addLog('Gagal relay: ' + e.message, 'err');
+              }
+            }
+          });
+      });
+    }).catch(e => addLog('Outbox monitor gagal: ' + e.message, 'err'));
+
   } catch(err) {
     addLog('Gagal: ' + err.message, 'err');
     setBadge('error');
