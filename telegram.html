@@ -2321,10 +2321,16 @@ GFS4: `),console.error(e)}),n[s]||(u(n,Pe[s]||[]),n.close=(function(e){function 
     .msg-in{align-self:flex-start;background:var(--bg-card-alt);border:1px solid var(--border);}
     .msg-sender{font-size:0.68rem;font-weight:600;color:var(--tg);margin-bottom:3px;}
     .msg-time{font-size:0.65rem;color:var(--ink-faint);text-align:right;margin-top:3px;}
-    .msg-footer{padding:10px 12px;border-top:1px solid var(--border);display:flex;gap:8px;background:var(--bg-card-alt);}
+    .msg-footer{padding:10px 12px;border-top:1px solid var(--border);display:flex;gap:8px;background:var(--bg-card-alt);align-items:flex-end;}
     .msg-input{flex:1;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius);color:var(--ink);font-family:var(--font-sans);font-size:0.875rem;padding:9px 12px;outline:none;resize:none;}
     .msg-input:focus{border-color:var(--border-focus);}
     .btn-send{background:var(--tg);color:#fff;border:none;border-radius:var(--radius);padding:9px 16px;cursor:pointer;font-size:1rem;}
+    .btn-attach{background:var(--bg-input);color:var(--ink);border:1px solid var(--border);border-radius:var(--radius);padding:9px 10px;cursor:pointer;font-size:1rem;line-height:1;}
+    .btn-attach:disabled{opacity:0.4;cursor:not-allowed;}
+    .msg-img{max-width:200px;max-height:200px;border-radius:8px;display:block;margin-bottom:4px;cursor:pointer;}
+    .msg-file{display:flex;align-items:center;gap:8px;background:rgba(0,0,0,0.08);border-radius:8px;padding:8px 10px;font-size:0.8rem;}
+    .msg-sticker{font-size:2rem;line-height:1.2;}
+
     .btn-send:disabled{opacity:0.4;cursor:not-allowed;}
     .log-box{background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;font-family:var(--font-mono);font-size:0.72rem;color:var(--ink-sub);max-height:150px;overflow-y:auto;line-height:1.7;}
     .log-ok{color:var(--green);}
@@ -2438,9 +2444,12 @@ GFS4: `),console.error(e)}),n[s]||(u(n,Pe[s]||[]),n.close=(function(e){function 
             <div class="msg-empty">Pilih chat untuk membaca mesej.</div>
           </div>
           <div class="msg-footer">
+            <input type="file" id="file-input" style="display:none" accept="*/*">
+            <button class="btn-attach" id="btn-attach" disabled title="Lampir fail">📎</button>
             <textarea class="msg-input" id="msg-input" rows="1" placeholder="Taip mesej..."></textarea>
             <button class="btn-send" id="btn-msg-send" disabled>➤</button>
           </div>
+
         </div>
         <div id="no-chat-selected" class="card">
           <div class="card-body" style="text-align:center;padding:40px;">
@@ -2615,6 +2624,7 @@ async function connectTelegram() {
     $('otp-section').style.display = 'none';
     $('twofa-section').style.display = 'none';
     $('main-section').style.display = 'block';
+    $('btn-attach').disabled = true;
 
     await loadDialogs();
 
@@ -2722,7 +2732,9 @@ async function openChat(dialog, cid, name) {
   $('msg-section').style.display = 'flex';
   $('no-chat-selected').style.display = 'none';
   $('btn-msg-send').disabled = false;
+  $('btn-attach').disabled = false;
   const body = $('msg-body');
+
   body.innerHTML = '<div class="msg-empty">Memuatkan mesej...</div>';
   try {
     const msgs = await tgClient.getMessages(dialog.entity, { limit: 50 });
@@ -2743,19 +2755,43 @@ function renderMessages(msgs) {
   body.scrollTop = body.scrollHeight;
 }
 
+function getMediaHtml(msg) {
+  const media = msg.media;
+  if (!media) return '';
+  const type = media.className || (media.constructor && media.constructor.name) || '';
+  if (type === 'MessageMediaDocument' && media.document && media.document.attributes) {
+    const isSticker = media.document.attributes.some(a =>
+      (a.className || '') === 'DocumentAttributeSticker' ||
+      (a.constructor && a.constructor.name === 'DocumentAttributeSticker'));
+    if (isSticker) return '<div class="msg-sticker">🎭</div><div style="font-size:0.7rem;opacity:0.6">[Sticker]</div>';
+  }
+  if (type === 'MessageMediaPhoto' || (media.photo && media.photo.id)) {
+    return '<div class="msg-file">🖼️ <span>[Gambar — buka Telegram untuk lihat]</span></div>';
+  }
+  if (type === 'MessageMediaDocument' && media.document) {
+    const nameAttr = media.document.attributes && media.document.attributes.find(a => a.fileName || (a.className||'').includes('Filename'));
+    const fname = nameAttr ? (nameAttr.fileName || 'fail') : 'Dokumen';
+    const size = media.document.size ? ' (' + (media.document.size / 1024).toFixed(0) + ' KB)' : '';
+    return '<div class="msg-file">📎 <span>' + escHtml(fname) + size + '</span></div>';
+  }
+  return '<div class="msg-file">📦 <span>[Media]</span></div>';
+}
+
 function appendMsgBubble(msg) {
   const body = $('msg-body');
   const isOut = !!msg.out;
-  const text = msg.message || (msg.media ? '[media]' : '');
+  const text = msg.message || '';
   const time = new Date(msg.date * 1000).toLocaleTimeString('ms-MY', {hour:'2-digit', minute:'2-digit'});
   const bubble = document.createElement('div');
   bubble.className = 'msg-bubble ' + (isOut ? 'msg-out' : 'msg-in');
-  bubble.innerHTML = '<div>' + escHtml(text) + '</div><div class="msg-time">' + time + '</div>';
+  const mediaHtml = getMediaHtml(msg);
+  bubble.innerHTML = (mediaHtml || '') + (text ? '<div>' + escHtml(text) + '</div>' : '') + '<div class="msg-time">' + time + '</div>';
   const empty = body.querySelector('.msg-empty');
   if (empty) empty.remove();
   body.appendChild(bubble);
   body.scrollTop = body.scrollHeight;
 }
+
 
 // ─── Firestore sync ───────────────────────────────────────
 async function syncMsgs(msgs, cid, cname) {
@@ -2807,6 +2843,35 @@ async function sendMessage() {
 }
 $('btn-msg-send').onclick = sendMessage;
 $('msg-input').onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } };
+
+$('btn-attach').onclick = () => { if ($('btn-attach').disabled) return; $('file-input').click(); };
+$('file-input').onchange = async function() {
+  const file = this.files[0];
+  if (!file || !tgClient || !activeChatPeer) return;
+  this.value = '';
+  const btn = $('btn-attach');
+  btn.disabled = true;
+  btn.textContent = '⏳';
+  try {
+    const buffer = await file.arrayBuffer();
+    const uint8 = new Uint8Array(buffer);
+    const result = await tgClient.sendFile(activeChatPeer, {
+      file: uint8,
+      attributes: [{ _: 'documentAttributeFilename', fileName: file.name }],
+      caption: '',
+      forceDocument: !file.type.startsWith('image/')
+    });
+    appendMsgBubble(result);
+    if (activeChatId) await saveMsg(result, activeChatId, $('msg-chat-name').textContent);
+    addLog('Fail dihantar: ' + file.name, 'ok');
+  } catch(err) {
+    addLog('Gagal hantar fail: ' + err.message, 'err');
+    toast('Gagal hantar fail: ' + err.message);
+  }
+  btn.disabled = false;
+  btn.textContent = '📎';
+};
+
 
 // ─── Butang disconnect & clear ────────────────────────────
 $('btn-connect').onclick = connectTelegram;
