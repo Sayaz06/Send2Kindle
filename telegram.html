@@ -2899,8 +2899,17 @@ async function saveMsg(msg, cid, cname) {
   if (!msg.message && !msg.media) return;
   try {
     await db.doc('tg_messages/' + cid).set({ name: cname, synced: true }, { merge: true });
+    let mediaLabel = '';
+    if (msg.media) {
+      const t = msg.media.className || msg.media.constructor && msg.media.constructor.name || '';
+      if (t.toLowerCase().includes('sticker') || (msg.media.document && msg.media.document.mimeType && msg.media.document.mimeType.includes('webp'))) mediaLabel = '[Sticker]';
+      else if (t.toLowerCase().includes('photo') || msg.media.photo) mediaLabel = '[Gambar]';
+      else if (t.toLowerCase().includes('document') || msg.media.document) mediaLabel = '[Fail]';
+      else mediaLabel = '[Media]';
+    }
     await db.doc('tg_messages/' + cid + '/messages/' + msg.id).set({
       id: msg.id, text: msg.message || '', hasMedia: !!msg.media,
+      mediaLabel: mediaLabel,
       out: !!msg.out, date: msg.date,
       chatId: cid, chatName: cname,
       syncedAt: firebase.firestore.FieldValue.serverTimestamp()
