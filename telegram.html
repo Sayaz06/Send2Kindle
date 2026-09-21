@@ -2759,6 +2759,7 @@ async function sendMessage() {
   input.value = '';
   try {
     const result = await tgClient.sendMessage(activeChatPeer, { message: text });
+    appendMsgBubble(result);
     if (activeChatId) await saveMsg(result, activeChatId, $('msg-chat-name').textContent);
     addLog('Dihantar: "' + text.substring(0,30) + '"', 'ok');
   } catch(err) {
