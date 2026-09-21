@@ -1,0 +1,790 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Telegram Bridge — Kindle Queue</title>
+  <meta name="theme-color" content="#0f0f11" />
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+    :root {
+      --bg:#0f0f11; --bg-card:#18181c; --bg-card-alt:#1e1e24; --bg-input:#121216;
+      --border:#2a2a32; --border-focus:#e8b86d;
+      --ink:#f0ece4; --ink-sub:#8a8790; --ink-faint:#3a3a44;
+      --accent:#e8b86d; --accent-dim:rgba(232,184,109,0.15); --accent-glow:rgba(232,184,109,0.08);
+      --green:#4ade80; --green-dim:rgba(74,222,128,0.12);
+      --red:#f87171; --red-dim:rgba(248,113,113,0.12);
+      --blue:#60a5fa; --blue-dim:rgba(96,165,250,0.12);
+      --tg:#2AABEE;
+      --radius-sm:6px; --radius:12px; --radius-lg:18px;
+      --font-sans:'IBM Plex Sans',system-ui,sans-serif;
+      --font-mono:'IBM Plex Mono',monospace;
+    }
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+    html{font-size:15px;}
+    body{font-family:var(--font-sans);background:var(--bg);color:var(--ink);min-height:100dvh;-webkit-font-smoothing:antialiased;}
+
+    .app{max-width:900px;margin:0 auto;padding:0 16px 40px;}
+    .header{display:flex;align-items:center;justify-content:space-between;padding:20px 0 16px;border-bottom:1px solid var(--border);margin-bottom:24px;gap:12px;flex-wrap:wrap;}
+    .header-brand{display:flex;align-items:center;gap:14px;}
+    .brand-icon{font-size:1.8rem;}
+    .brand-name{font-size:1.25rem;font-weight:600;letter-spacing:-0.01em;}
+    .brand-sub{font-size:0.78rem;color:var(--ink-sub);margin-top:1px;}
+    .back-link{font-size:0.8rem;color:var(--ink-sub);text-decoration:none;display:flex;align-items:center;gap:4px;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);transition:all 0.15s;}
+    .back-link:hover{border-color:var(--accent);color:var(--accent);}
+
+    .card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;margin-bottom:16px;}
+    .card-header{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--border);}
+    .card-icon{font-size:1rem;}
+    .card-title{font-size:0.9rem;font-weight:600;flex:1;}
+    .card-body{padding:16px 18px;display:flex;flex-direction:column;gap:14px;}
+
+    .field{display:flex;flex-direction:column;gap:6px;}
+    .field-label{font-size:0.78rem;font-weight:500;color:var(--ink-sub);}
+    .field-input{background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius);color:var(--ink);font-family:var(--font-sans);font-size:0.875rem;padding:9px 12px;outline:none;width:100%;transition:border-color 0.15s,box-shadow 0.15s;}
+    .field-input:focus{border-color:var(--border-focus);box-shadow:0 0 0 3px var(--accent-glow);}
+    .field-input::placeholder{color:var(--ink-faint);}
+
+    .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:none;border-radius:var(--radius);padding:10px 18px;font-size:0.875rem;font-weight:500;cursor:pointer;transition:all 0.15s;font-family:var(--font-sans);}
+    .btn-primary{background:var(--accent);color:#0f0f11;}
+    .btn-primary:hover{filter:brightness(1.1);}
+    .btn-primary:disabled{opacity:0.4;cursor:not-allowed;}
+    .btn-ghost{background:var(--bg-card-alt);color:var(--ink-sub);border:1px solid var(--border);}
+    .btn-ghost:hover{border-color:var(--accent);color:var(--accent);}
+    .btn-tg{background:var(--tg);color:#fff;}
+    .btn-tg:hover{filter:brightness(1.1);}
+    .btn-danger{background:var(--red-dim);color:var(--red);border:1px solid rgba(248,113,113,0.2);}
+    .btn-danger:hover{background:rgba(248,113,113,0.2);}
+    .btn-row{display:flex;gap:10px;flex-wrap:wrap;}
+
+    /* Status badge */
+    .status-badge{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;font-size:0.75rem;font-weight:500;}
+    .badge-off{background:var(--bg-card-alt);color:var(--ink-faint);border:1px solid var(--border);}
+    .badge-connecting{background:rgba(251,191,36,0.12);color:#fbbf24;border:1px solid rgba(251,191,36,0.2);}
+    .badge-on{background:var(--green-dim);color:var(--green);border:1px solid rgba(74,222,128,0.2);}
+    .badge-error{background:var(--red-dim);color:var(--red);border:1px solid rgba(248,113,113,0.2);}
+    .pulse{width:8px;height:8px;border-radius:50%;background:currentColor;animation:pulse 1.5s infinite;}
+    @keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.3;}}
+
+    /* Info box */
+    .info-box{background:var(--bg-card-alt);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;font-size:0.8rem;color:var(--ink-sub);line-height:1.6;}
+    .info-box.warn{background:rgba(251,191,36,0.06);border-color:rgba(251,191,36,0.2);color:#fbbf24;}
+    .info-box.success{background:var(--green-dim);border-color:rgba(74,222,128,0.2);color:var(--green);}
+
+    /* Chat list */
+    .chat-list{display:flex;flex-direction:column;gap:6px;max-height:320px;overflow-y:auto;}
+    .chat-item{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:var(--radius);cursor:pointer;transition:all 0.15s;border:1px solid transparent;}
+    .chat-item:hover{background:var(--bg-card-alt);border-color:var(--border);}
+    .chat-item.active{background:var(--accent-dim);border-color:var(--accent);}
+    .chat-avatar{width:36px;height:36px;border-radius:50%;background:var(--bg-card-alt);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:1rem;flex-shrink:0;overflow:hidden;}
+    .chat-avatar img{width:100%;height:100%;object-fit:cover;}
+    .chat-info{flex:1;min-width:0;}
+    .chat-name{font-size:0.875rem;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+    .chat-last{font-size:0.75rem;color:var(--ink-sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;}
+    .chat-unread{background:var(--tg);color:#fff;border-radius:999px;font-size:0.65rem;font-weight:600;padding:2px 7px;min-width:20px;text-align:center;}
+
+    /* Message area */
+    .msg-area{display:flex;flex-direction:column;height:420px;border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;}
+    .msg-header{padding:12px 16px;border-bottom:1px solid var(--border);background:var(--bg-card-alt);display:flex;align-items:center;gap:10px;}
+    .msg-header-name{font-weight:600;font-size:0.9rem;flex:1;}
+    .msg-body{flex:1;overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;gap:6px;}
+    .msg-empty{text-align:center;color:var(--ink-faint);font-size:0.8rem;margin:auto;}
+    .msg-bubble{max-width:75%;padding:8px 12px;border-radius:var(--radius);font-size:0.85rem;line-height:1.5;word-break:break-word;}
+    .msg-out{align-self:flex-end;background:rgba(232,184,109,0.15);border:1px solid rgba(232,184,109,0.2);color:var(--ink);}
+    .msg-in{align-self:flex-start;background:var(--bg-card-alt);border:1px solid var(--border);}
+    .msg-sender{font-size:0.68rem;font-weight:600;color:var(--tg);margin-bottom:3px;}
+    .msg-time{font-size:0.65rem;color:var(--ink-faint);text-align:right;margin-top:3px;}
+    .msg-footer{padding:10px 12px;border-top:1px solid var(--border);display:flex;gap:8px;background:var(--bg-card-alt);}
+    .msg-input{flex:1;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius);color:var(--ink);font-family:var(--font-sans);font-size:0.875rem;padding:9px 12px;outline:none;resize:none;max-height:100px;}
+    .msg-input:focus{border-color:var(--border-focus);}
+    .btn-send{background:var(--tg);color:#fff;border:none;border-radius:var(--radius);padding:9px 16px;cursor:pointer;font-size:1rem;transition:all 0.15s;}
+    .btn-send:hover{filter:brightness(1.1);}
+    .btn-send:disabled{opacity:0.4;cursor:not-allowed;}
+
+    /* Log */
+    .log-box{background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;font-family:var(--font-mono);font-size:0.72rem;color:var(--ink-sub);max-height:150px;overflow-y:auto;line-height:1.7;}
+    .log-line{display:block;}
+    .log-ok{color:var(--green);}
+    .log-err{color:var(--red);}
+    .log-info{color:var(--blue);}
+
+    .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#23232b;color:var(--ink);border:1px solid var(--border);border-radius:var(--radius);padding:10px 20px;font-size:0.85rem;z-index:999;opacity:0;transition:opacity 0.3s;pointer-events:none;}
+    .toast.show{opacity:1;}
+
+    .two-col{display:grid;grid-template-columns:300px 1fr;gap:16px;align-items:start;}
+    @media(max-width:700px){.two-col{grid-template-columns:1fr;}}
+  </style>
+</head>
+<body>
+
+<div id="toast" class="toast"></div>
+
+<div class="app">
+  <header class="header">
+    <div class="header-brand">
+      <div class="brand-icon">✈️</div>
+      <div>
+        <h1 class="brand-name">Telegram Bridge</h1>
+        <p class="brand-sub">MTProto → Firestore → Kindle</p>
+      </div>
+    </div>
+    <a href="./index.html" class="back-link">← Kembali ke Queue</a>
+  </header>
+
+  <!-- STEP 1: API credentials -->
+  <div class="card" id="card-creds">
+    <div class="card-header">
+      <span class="card-icon">🔑</span>
+      <h2 class="card-title">API Credentials Telegram</h2>
+      <span id="badge-status" class="status-badge badge-off"><span class="pulse" style="display:none"></span>Tidak Bersambung</span>
+    </div>
+    <div class="card-body">
+      <div class="info-box">
+        Dapatkan <strong>api_id</strong> dan <strong>api_hash</strong> dari <a href="https://my.telegram.org/auth" target="_blank">my.telegram.org</a> → API development tools → buat app baru.
+        Credentials ini disimpan dalam localStorage browser sahaja.
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div class="field">
+          <label class="field-label">API ID</label>
+          <input class="field-input" id="inp-api-id" type="text" placeholder="12345678" />
+        </div>
+        <div class="field">
+          <label class="field-label">API Hash</label>
+          <input class="field-input" id="inp-api-hash" type="password" placeholder="a1b2c3d4e5..." />
+        </div>
+      </div>
+      <div class="field">
+        <label class="field-label">Nombor Telefon (dengan kod negara)</label>
+        <input class="field-input" id="inp-phone" type="tel" placeholder="+601xxxxxxxx" />
+      </div>
+
+      <!-- OTP step (hidden by default) -->
+      <div id="otp-section" style="display:none;">
+        <div class="info-box warn">📱 Kod OTP telah dihantar ke Telegram anda. Masukkan di bawah.</div>
+        <div style="margin-top:10px;display:flex;gap:10px;align-items:flex-end;">
+          <div class="field" style="flex:1;">
+            <label class="field-label">Kod OTP</label>
+            <input class="field-input" id="inp-otp" type="text" placeholder="12345" maxlength="10" />
+          </div>
+          <button class="btn btn-tg" id="btn-verify-otp">Sahkan OTP</button>
+        </div>
+      </div>
+
+      <!-- 2FA step (hidden by default) -->
+      <div id="twofa-section" style="display:none;">
+        <div class="info-box warn">🔐 Akaun anda mempunyai 2FA. Masukkan kata laluan cloud.</div>
+        <div style="margin-top:10px;display:flex;gap:10px;align-items:flex-end;">
+          <div class="field" style="flex:1;">
+            <label class="field-label">Kata Laluan 2FA</label>
+            <input class="field-input" id="inp-2fa" type="password" placeholder="••••••••" />
+          </div>
+          <button class="btn btn-tg" id="btn-verify-2fa">Sahkan</button>
+        </div>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn btn-tg" id="btn-connect">⚡ Sambung Telegram</button>
+        <button class="btn btn-danger" id="btn-disconnect" style="display:none;">✕ Putus Sambungan</button>
+        <button class="btn btn-ghost" id="btn-clear-session">🗑️ Padam Session</button>
+      </div>
+
+      <div id="log-area" class="log-box">
+        <span class="log-line log-info">Sedia untuk bersambung...</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 2: Chat & messages (hidden until connected) -->
+  <div id="main-section" style="display:none;">
+    <div class="two-col">
+
+      <!-- LEFT: Chat list -->
+      <div>
+        <div class="card">
+          <div class="card-header">
+            <span class="card-icon">💬</span>
+            <h2 class="card-title">Senarai Chat</h2>
+            <button class="btn btn-ghost" id="btn-refresh-chats" style="font-size:0.75rem;padding:4px 10px;">🔄</button>
+          </div>
+          <div class="card-body" style="padding:10px;">
+            <input class="field-input" id="chat-search" placeholder="Cari chat..." style="margin-bottom:8px;" />
+            <div id="chat-list" class="chat-list">
+              <div style="text-align:center;color:var(--ink-faint);font-size:0.8rem;padding:20px;">Memuatkan chat...</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sync status -->
+        <div class="card" id="sync-card" style="display:none;">
+          <div class="card-header">
+            <span class="card-icon">🔥</span>
+            <h2 class="card-title">Sync ke Firestore</h2>
+          </div>
+          <div class="card-body">
+            <div class="info-box success" id="sync-info">Chat aktif akan sync ke Firestore secara automatik.</div>
+            <div style="font-size:0.75rem;color:var(--ink-faint);">
+              Kindle app boleh baca dari:<br/>
+              <code style="color:var(--accent);">tg_messages/{chatId}/messages</code>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- RIGHT: Message area -->
+      <div>
+        <div id="msg-section" class="msg-area" style="display:none;">
+          <div class="msg-header">
+            <div class="msg-header-name" id="msg-chat-name">—</div>
+            <span id="msg-sync-badge" class="status-badge badge-on" style="display:none;">
+              <span class="pulse"></span>Live Sync
+            </span>
+          </div>
+          <div class="msg-body" id="msg-body">
+            <div class="msg-empty">Pilih chat untuk mula membaca mesej.</div>
+          </div>
+          <div class="msg-footer">
+            <textarea class="msg-input" id="msg-input" rows="1" placeholder="Taip mesej..."></textarea>
+            <button class="btn-send" id="btn-msg-send" disabled>➤</button>
+          </div>
+        </div>
+
+        <div id="no-chat-selected" class="card" style="">
+          <div class="card-body" style="text-align:center;padding:40px;">
+            <div style="font-size:2rem;margin-bottom:12px;">💬</div>
+            <div style="color:var(--ink-sub);font-size:0.85rem;">Pilih chat dari senarai sebelah kiri</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- GramJS dari CDN (browser build) -->
+<script src="https://cdn.jsdelivr.net/npm/telegram@2.26.22/browser/telegram.min.js"></script>
+
+<!-- Firebase v10 modular (sama dengan app.js) -->
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+import {
+  getAuth, onAuthStateChanged, GoogleAuthProvider, signInWithPopup
+} from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
+import {
+  getFirestore, collection, doc, setDoc, addDoc,
+  serverTimestamp, query, orderBy, limit, onSnapshot, getDocs
+} from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+
+const firebaseConfig = {
+  apiKey:            "AIzaSyAGLX_xxH_dQ06epX4XCXtuSHN0DwZFMjA",
+  authDomain:        "stress-auti-action.firebaseapp.com",
+  projectId:         "stress-auti-action",
+  storageBucket:     "stress-auti-action.firebasestorage.app",
+  messagingSenderId: "792580618622",
+  appId:             "1:792580618622:web:f0efb1d630e795584d5b2f"
+};
+
+const fbApp = initializeApp(firebaseConfig, 'tg-bridge');
+const auth = getAuth(fbApp);
+const db = getFirestore(fbApp);
+
+// ─── Helpers ───────────────────────────────────────────
+const $ = id => document.getElementById(id);
+let toastTimer;
+function toast(msg, dur=3000) {
+  const el = $('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), dur);
+}
+
+function addLog(msg, type='') {
+  const box = $('log-area');
+  const line = document.createElement('span');
+  line.className = `log-line${type ? ' log-'+type : ''}`;
+  const now = new Date().toLocaleTimeString('ms-MY');
+  line.textContent = `[${now}] ${msg}`;
+  box.appendChild(line);
+  box.appendChild(document.createElement('br'));
+  box.scrollTop = box.scrollHeight;
+}
+
+function setBadge(state) {
+  const b = $('badge-status');
+  b.className = 'status-badge';
+  const pulse = b.querySelector('.pulse');
+  if (state === 'on') {
+    b.classList.add('badge-on');
+    b.innerHTML = '<span class="pulse"></span>Bersambung';
+    pulse && (pulse.style.display = '');
+  } else if (state === 'connecting') {
+    b.classList.add('badge-connecting');
+    b.innerHTML = '<span class="pulse"></span>Menyambung...';
+  } else if (state === 'error') {
+    b.classList.add('badge-error');
+    b.innerHTML = 'Ralat';
+  } else {
+    b.classList.add('badge-off');
+    b.innerHTML = 'Tidak Bersambung';
+  }
+}
+
+// ─── localStorage helpers ───────────────────────────────
+const LS_KEY = 'tg_bridge_creds';
+const LS_SESSION = 'tg_session_string';
+
+function saveCreds() {
+  const data = {
+    apiId: $('inp-api-id').value.trim(),
+    apiHash: $('inp-api-hash').value.trim(),
+    phone: $('inp-phone').value.trim()
+  };
+  localStorage.setItem(LS_KEY, JSON.stringify(data));
+}
+
+function loadCreds() {
+  try {
+    const d = JSON.parse(localStorage.getItem(LS_KEY) || '{}');
+    if (d.apiId) $('inp-api-id').value = d.apiId;
+    if (d.apiHash) $('inp-api-hash').value = d.apiHash;
+    if (d.phone) $('inp-phone').value = d.phone;
+  } catch(e) {}
+}
+
+function getSavedSession() {
+  return localStorage.getItem(LS_SESSION) || '';
+}
+
+function saveSession(str) {
+  localStorage.setItem(LS_SESSION, str);
+}
+
+// ─── GramJS state ───────────────────────────────────────
+let tgClient = null;
+let tgMe = null;
+let activeChatId = null;
+let activeChatPeer = null;
+let msgUnsubscribe = null;
+let newMsgHandler = null;
+let resolveOtp = null;
+let resolve2fa = null;
+let allDialogs = [];
+
+// ─── Connect / Disconnect ───────────────────────────────
+async function connectTelegram() {
+  const apiId = parseInt($('inp-api-id').value.trim());
+  const apiHash = $('inp-api-hash').value.trim();
+  const phone = $('inp-phone').value.trim();
+
+  if (!apiId || !apiHash || !phone) {
+    toast('Isi semua maklumat!'); return;
+  }
+
+  saveCreds();
+  setBadge('connecting');
+  addLog('Menyambung ke Telegram...', 'info');
+
+  $('btn-connect').disabled = true;
+
+  try {
+    // GramJS StringSession
+    const { TelegramClient } = window.telegram;
+    const { StringSession } = window.telegram.sessions;
+
+    const sessionStr = getSavedSession();
+    const session = new StringSession(sessionStr);
+
+    tgClient = new TelegramClient(session, apiId, apiHash, {
+      connectionRetries: 5,
+      useWSS: true,
+    });
+
+    await tgClient.start({
+      phoneNumber: async () => phone,
+      password: async () => {
+        // 2FA required
+        $('twofa-section').style.display = 'block';
+        addLog('2FA diperlukan. Masukkan kata laluan cloud.', 'info');
+        return new Promise(resolve => { resolve2fa = resolve; });
+      },
+      phoneCode: async () => {
+        // OTP required
+        $('otp-section').style.display = 'block';
+        addLog('OTP dihantar. Masukkan kod.', 'info');
+        return new Promise(resolve => { resolveOtp = resolve; });
+      },
+      onError: (err) => {
+        addLog('Ralat: ' + err.message, 'err');
+      }
+    });
+
+    // Save session for next time
+    saveSession(tgClient.session.save());
+
+    tgMe = await tgClient.getMe();
+    addLog(`Berjaya log masuk sebagai @${tgMe.username || tgMe.firstName}`, 'ok');
+
+    setBadge('on');
+    $('btn-connect').style.display = 'none';
+    $('btn-disconnect').style.display = '';
+    $('otp-section').style.display = 'none';
+    $('twofa-section').style.display = 'none';
+
+    // Show main section
+    $('main-section').style.display = 'block';
+    $('sync-card').style.display = 'block';
+
+    await loadDialogs();
+    setupNewMessageHandler();
+
+  } catch(err) {
+    addLog('Gagal: ' + err.message, 'err');
+    setBadge('error');
+    $('btn-connect').disabled = false;
+    toast('Gagal sambung: ' + err.message, 5000);
+  }
+}
+
+function disconnectTelegram() {
+  if (tgClient) {
+    tgClient.disconnect().catch(() => {});
+    tgClient = null;
+  }
+  tgMe = null;
+  activeChatId = null;
+  if (newMsgHandler) {
+    newMsgHandler = null;
+  }
+  setBadge('off');
+  $('btn-connect').style.display = '';
+  $('btn-connect').disabled = false;
+  $('btn-disconnect').style.display = 'none';
+  $('main-section').style.display = 'none';
+  addLog('Putus sambungan.', 'info');
+  toast('Putus sambungan dari Telegram.');
+}
+
+// ─── OTP / 2FA button handlers ──────────────────────────
+$('btn-verify-otp').onclick = () => {
+  const code = $('inp-otp').value.trim();
+  if (!code) { toast('Masukkan kod OTP!'); return; }
+  if (resolveOtp) { resolveOtp(code); resolveOtp = null; }
+  $('otp-section').style.display = 'none';
+  addLog('OTP dihantar...', 'info');
+};
+
+$('btn-verify-2fa').onclick = () => {
+  const pw = $('inp-2fa').value;
+  if (!pw) { toast('Masukkan kata laluan!'); return; }
+  if (resolve2fa) { resolve2fa(pw); resolve2fa = null; }
+  $('twofa-section').style.display = 'none';
+  addLog('2FA dihantar...', 'info');
+};
+
+$('inp-otp').addEventListener('keydown', e => {
+  if (e.key === 'Enter') $('btn-verify-otp').click();
+});
+
+$('inp-2fa').addEventListener('keydown', e => {
+  if (e.key === 'Enter') $('btn-verify-2fa').click();
+});
+
+// ─── Load dialogs (chat list) ───────────────────────────
+async function loadDialogs() {
+  const listEl = $('chat-list');
+  listEl.innerHTML = '<div style="text-align:center;color:var(--ink-faint);font-size:0.8rem;padding:20px;">Memuatkan...</div>';
+
+  try {
+    const dialogs = await tgClient.getDialogs({ limit: 50 });
+    allDialogs = dialogs;
+    renderChatList(dialogs);
+    addLog(`Dimuatkan ${dialogs.length} dialog.`, 'ok');
+  } catch(err) {
+    addLog('Gagal muatkan dialog: ' + err.message, 'err');
+    listEl.innerHTML = '<div style="color:var(--red);font-size:0.8rem;padding:12px;">Gagal memuatkan chat.</div>';
+  }
+}
+
+function renderChatList(dialogs) {
+  const listEl = $('chat-list');
+  listEl.innerHTML = '';
+
+  if (!dialogs || dialogs.length === 0) {
+    listEl.innerHTML = '<div style="color:var(--ink-faint);font-size:0.8rem;padding:12px;text-align:center;">Tiada chat.</div>';
+    return;
+  }
+
+  dialogs.forEach(dialog => {
+    const entity = dialog.entity;
+    if (!entity) return;
+
+    const chatId = entity.id?.toString() || '';
+    const name = entity.firstName
+      ? (entity.firstName + (entity.lastName ? ' ' + entity.lastName : ''))
+      : (entity.title || 'Unknown');
+    const isGroup = !!(entity.megagroup || entity.broadcast || entity.gigagroup);
+    const lastMsg = dialog.message?.message || '';
+    const unread = dialog.unreadCount || 0;
+
+    const item = document.createElement('div');
+    item.className = 'chat-item';
+    item.dataset.chatId = chatId;
+    item.innerHTML = `
+      <div class="chat-avatar">${isGroup ? '👥' : '👤'}</div>
+      <div class="chat-info">
+        <div class="chat-name">${escHtml(name)}</div>
+        <div class="chat-last">${escHtml(lastMsg.substring(0, 50))}</div>
+      </div>
+      ${unread > 0 ? `<div class="chat-unread">${unread}</div>` : ''}
+    `;
+    item.addEventListener('click', () => openChat(dialog, chatId, name));
+    listEl.appendChild(item);
+  });
+}
+
+// ─── Search filter ──────────────────────────────────────
+$('chat-search').addEventListener('input', function() {
+  const q = this.value.toLowerCase();
+  const filtered = allDialogs.filter(d => {
+    const e = d.entity;
+    if (!e) return false;
+    const name = (e.firstName || '') + ' ' + (e.lastName || '') + ' ' + (e.title || '');
+    return name.toLowerCase().includes(q);
+  });
+  renderChatList(filtered);
+});
+
+$('btn-refresh-chats').onclick = () => loadDialogs();
+
+// ─── Open chat ──────────────────────────────────────────
+async function openChat(dialog, chatId, name) {
+  // Update UI
+  document.querySelectorAll('.chat-item').forEach(el => el.classList.remove('active'));
+  const activeEl = document.querySelector(`.chat-item[data-chat-id="${chatId}"]`);
+  if (activeEl) activeEl.classList.add('active');
+
+  activeChatId = chatId;
+  activeChatPeer = dialog.entity;
+
+  $('msg-chat-name').textContent = name;
+  $('msg-section').style.display = 'flex';
+  $('no-chat-selected').style.display = 'none';
+  $('msg-sync-badge').style.display = '';
+  $('btn-msg-send').disabled = false;
+
+  // Load recent messages from Telegram
+  const msgBody = $('msg-body');
+  msgBody.innerHTML = '<div class="msg-empty">Memuatkan mesej...</div>';
+
+  try {
+    const messages = await tgClient.getMessages(dialog.entity, { limit: 50 });
+    renderMessages(messages.reverse(), chatId);
+
+    // Also sync to Firestore
+    await syncMessagesToFirestore(messages, chatId, name);
+    addLog(`Chat "${name}" dibuka & synced.`, 'ok');
+  } catch(err) {
+    addLog('Gagal muatkan mesej: ' + err.message, 'err');
+    msgBody.innerHTML = '<div class="msg-empty" style="color:var(--red);">Gagal memuatkan mesej.</div>';
+  }
+}
+
+function renderMessages(messages, chatId) {
+  const msgBody = $('msg-body');
+  msgBody.innerHTML = '';
+
+  if (!messages || messages.length === 0) {
+    msgBody.innerHTML = '<div class="msg-empty">Tiada mesej.</div>';
+    return;
+  }
+
+  messages.forEach(msg => {
+    if (!msg.message && !msg.media) return;
+    appendMsgBubble(msg);
+  });
+
+  msgBody.scrollTop = msgBody.scrollHeight;
+}
+
+function appendMsgBubble(msg) {
+  const msgBody = $('msg-body');
+  const isOut = msg.out;
+  const text = msg.message || (msg.media ? '[media]' : '');
+  const time = new Date(msg.date * 1000).toLocaleTimeString('ms-MY', {hour:'2-digit', minute:'2-digit'});
+
+  const senderName = isOut
+    ? (tgMe ? (tgMe.firstName || 'Anda') : 'Anda')
+    : (msg.fromId ? '' : '');
+
+  const bubble = document.createElement('div');
+  bubble.className = `msg-bubble ${isOut ? 'msg-out' : 'msg-in'}`;
+  bubble.dataset.msgId = msg.id;
+  bubble.innerHTML = `
+    ${(!isOut && senderName) ? `<div class="msg-sender">${escHtml(senderName)}</div>` : ''}
+    <div>${escHtml(text)}</div>
+    <div class="msg-time">${time}</div>
+  `;
+
+  // Remove empty placeholder
+  const empty = msgBody.querySelector('.msg-empty');
+  if (empty) empty.remove();
+
+  msgBody.appendChild(bubble);
+  msgBody.scrollTop = msgBody.scrollHeight;
+}
+
+// ─── Sync messages to Firestore ─────────────────────────
+async function syncMessagesToFirestore(messages, chatId, chatName) {
+  if (!messages || messages.length === 0) return;
+
+  // Save chat metadata
+  const chatRef = doc(db, 'tg_messages', chatId);
+  await setDoc(chatRef, {
+    name: chatName,
+    lastSync: serverTimestamp(),
+    chatId: chatId
+  }, { merge: true });
+
+  // Save messages (batch-like, individual for simplicity)
+  const msgsCol = collection(db, 'tg_messages', chatId, 'messages');
+  const promises = messages.slice(0, 30).map(msg => {
+    if (!msg.message && !msg.media) return Promise.resolve();
+    const msgDoc = doc(msgsCol, String(msg.id));
+    return setDoc(msgDoc, {
+      id: msg.id,
+      text: msg.message || '',
+      hasMedia: !!msg.media,
+      out: !!msg.out,
+      date: msg.date,
+      fromId: msg.fromId?.userId?.toString() || msg.fromId?.channelId?.toString() || null,
+      chatId: chatId,
+      chatName: chatName,
+      syncedAt: serverTimestamp()
+    }, { merge: true });
+  });
+
+  await Promise.allSettled(promises);
+}
+
+async function saveNewMsgToFirestore(msg, chatId, chatName) {
+  if (!msg.message && !msg.media) return;
+  try {
+    const msgDoc = doc(db, 'tg_messages', chatId, 'messages', String(msg.id));
+    await setDoc(msgDoc, {
+      id: msg.id,
+      text: msg.message || '',
+      hasMedia: !!msg.media,
+      out: !!msg.out,
+      date: msg.date,
+      fromId: msg.fromId?.userId?.toString() || msg.fromId?.channelId?.toString() || null,
+      chatId: chatId,
+      chatName: chatName,
+      syncedAt: serverTimestamp()
+    }, { merge: true });
+  } catch(err) {
+    console.warn('Firestore sync err:', err);
+  }
+}
+
+// ─── New message handler ─────────────────────────────────
+function setupNewMessageHandler() {
+  const { NewMessage } = window.telegram.events;
+
+  tgClient.addEventHandler(async (event) => {
+    const msg = event.message;
+    if (!msg) return;
+
+    const senderId = msg.chatId?.toString() || msg.peerId?.channelId?.toString() || msg.peerId?.userId?.toString() || null;
+
+    // If currently viewing this chat, append bubble
+    if (senderId === activeChatId) {
+      appendMsgBubble(msg);
+    }
+
+    // Always sync to Firestore if chat is known
+    if (senderId) {
+      // Find chat name from dialogs
+      const dialog = allDialogs.find(d => d.entity?.id?.toString() === senderId);
+      const chatName = dialog
+        ? (dialog.entity.firstName || dialog.entity.title || 'Unknown')
+        : 'Unknown';
+
+      await saveNewMsgToFirestore(msg, senderId, chatName);
+
+      // Update last message preview in list
+      const chatEl = document.querySelector(`.chat-item[data-chat-id="${senderId}"] .chat-last`);
+      if (chatEl) chatEl.textContent = (msg.message || '').substring(0, 50);
+    }
+
+  }, new NewMessage({}));
+
+  addLog('Monitoring mesej baharu aktif.', 'ok');
+}
+
+// ─── Send message ────────────────────────────────────────
+async function sendMessage() {
+  if (!tgClient || !activeChatPeer) return;
+  const input = $('msg-input');
+  const text = input.value.trim();
+  if (!text) return;
+
+  $('btn-msg-send').disabled = true;
+  input.value = '';
+
+  try {
+    const result = await tgClient.sendMessage(activeChatPeer, { message: text });
+    addLog(`Mesej dihantar: "${text.substring(0, 30)}"`, 'ok');
+
+    // Save to Firestore as outgoing
+    if (activeChatId) {
+      await saveNewMsgToFirestore(result, activeChatId, $('msg-chat-name').textContent);
+    }
+  } catch(err) {
+    addLog('Gagal hantar: ' + err.message, 'err');
+    toast('Gagal hantar mesej: ' + err.message, 4000);
+    input.value = text; // restore
+  }
+
+  $('btn-msg-send').disabled = false;
+  input.focus();
+}
+
+$('btn-msg-send').onclick = () => sendMessage();
+$('msg-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+});
+
+// ─── Button handlers ─────────────────────────────────────
+$('btn-connect').onclick = connectTelegram;
+$('btn-disconnect').onclick = disconnectTelegram;
+
+$('btn-clear-session').onclick = () => {
+  if (!confirm('Padam session tersimpan? Anda perlu log masuk semula.')) return;
+  localStorage.removeItem(LS_SESSION);
+  toast('Session dipadam. Sila log masuk semula.');
+  addLog('Session dipadam.', 'info');
+};
+
+// ─── Utility ─────────────────────────────────────────────
+function escHtml(str) {
+  if (!str) return '';
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ─── Init ────────────────────────────────────────────────
+loadCreds();
+
+// Auto-reconnect if session exists
+window.addEventListener('load', () => {
+  const session = getSavedSession();
+  if (session) {
+    addLog('Session lama ditemui. Tekan "Sambung" untuk reconnect.', 'info');
+    $('btn-connect').textContent = '⚡ Sambung Semula';
+  }
+});
+
+</script>
+</body>
+</html>
