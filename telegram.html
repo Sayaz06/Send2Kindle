@@ -2507,25 +2507,46 @@ function escHtml(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
-// ─── Creds (localStorage) + Session (Firestore) ───────────
+// ─── Creds (localStorage + Firestore) + Session (Firestore) ───────────
 const LS_KEY = 'tg_bridge_creds';
 let currentUser = null;
 
 function saveCreds() {
-  localStorage.setItem(LS_KEY, JSON.stringify({
+  const data = {
     apiId: $('inp-api-id').value.trim(),
     apiHash: $('inp-api-hash').value.trim(),
     phone: $('inp-phone').value.trim()
-  }));
+  };
+  localStorage.setItem(LS_KEY, JSON.stringify(data));
+  if (currentUser) {
+    db.doc('users/' + currentUser.uid + '/tg_session/creds')
+      .set(data).catch(e => console.warn('saveCreds err:', e));
+  }
 }
-function loadCreds() {
+async function loadCreds() {
   try {
     const d = JSON.parse(localStorage.getItem(LS_KEY) || '{}');
-    if (d.apiId) $('inp-api-id').value = d.apiId;
-    if (d.apiHash) $('inp-api-hash').value = d.apiHash;
-    if (d.phone) $('inp-phone').value = d.phone;
+    if (d.apiId && d.apiHash) {
+      if (d.apiId) $('inp-api-id').value = d.apiId;
+      if (d.apiHash) $('inp-api-hash').value = d.apiHash;
+      if (d.phone) $('inp-phone').value = d.phone;
+      return;
+    }
+  } catch(e) {}
+  // localStorage kosong — cuba dari Firestore
+  if (!currentUser) return;
+  try {
+    const snap = await db.doc('users/' + currentUser.uid + '/tg_session/creds').get();
+    if (snap.exists) {
+      const d = snap.data();
+      if (d.apiId) $('inp-api-id').value = d.apiId;
+      if (d.apiHash) $('inp-api-hash').value = d.apiHash;
+      if (d.phone) $('inp-phone').value = d.phone;
+      localStorage.setItem(LS_KEY, JSON.stringify(d));
+    }
   } catch(e) {}
 }
+
 async function saveSessionFS(str) {
   if (!currentUser || !str) return;
   try {
@@ -2947,7 +2968,7 @@ firebase.auth().onAuthStateChanged(async (user) => {
     return;
   }
   addLog('Firebase: ' + user.email, 'ok');
-  loadCreds();
+  await loadCreds();
   // Check ada session Telegram tersimpan
   const savedSession = await loadSessionFS();
   if (savedSession) {
