@@ -2737,9 +2737,14 @@ function setChatSync(cid, val) {
   else localStorage.removeItem('tg_kindle_sync_' + cid);
   if (currentUser) {
     db.doc('users/' + currentUser.uid + '/tg_kindle_sync/' + cid)
-      .set({ synced: val ? true : false, updatedAt: firebase.firestore.FieldValue.serverTimestamp() })
+      .set({ synced: !!val, updatedAt: firebase.firestore.FieldValue.serverTimestamp() })
       .catch(e => console.warn('sync save err:', e));
   }
+  const nameEl = document.querySelector('.chat-item[data-cid="' + cid + '"] .chat-name');
+  const chatName = nameEl ? nameEl.textContent : cid;
+  db.doc('tg_messages/' + cid)
+    .set({ name: chatName, synced: !!val }, { merge: true })
+    .catch(e => console.warn('tg_messages sync err:', e));
 }
 async function loadKindleSyncFromFS() {
   if (!currentUser) return;
