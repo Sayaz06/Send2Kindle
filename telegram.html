@@ -2735,6 +2735,22 @@ function isChatSynced(cid) {
 function setChatSync(cid, val) {
   if (val) localStorage.setItem('tg_kindle_sync_' + cid, '1');
   else localStorage.removeItem('tg_kindle_sync_' + cid);
+  if (currentUser) {
+    db.doc('users/' + currentUser.uid + '/tg_kindle_sync/' + cid)
+      .set({ synced: val ? true : false, updatedAt: firebase.firestore.FieldValue.serverTimestamp() })
+      .catch(e => console.warn('sync save err:', e));
+  }
+}
+async function loadKindleSyncFromFS() {
+  if (!currentUser) return;
+  try {
+    const snap = await db.collection('users/' + currentUser.uid + '/tg_kindle_sync').get();
+    snap.forEach(doc => {
+      const d = doc.data();
+      if (d.synced) localStorage.setItem('tg_kindle_sync_' + doc.id, '1');
+      else localStorage.removeItem('tg_kindle_sync_' + doc.id);
+    });
+  } catch(e) { console.warn('loadSync err:', e); }
 }
 function renderChatList(dialogs) {
   const list = $('chat-list');
@@ -2969,6 +2985,7 @@ firebase.auth().onAuthStateChanged(async (user) => {
   }
   addLog('Firebase: ' + user.email, 'ok');
   await loadCreds();
+  await loadKindleSyncFromFS();
   // Check ada session Telegram tersimpan
   const savedSession = await loadSessionFS();
   if (savedSession) {
