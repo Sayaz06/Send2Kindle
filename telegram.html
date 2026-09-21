@@ -2637,9 +2637,10 @@ async function connectTelegram() {
       if (cid) {
         const dlg = allDialogs.find(d => d.entity && d.entity.id && d.entity.id.toString() === cid);
         const cname = dlg ? (dlg.entity.firstName || dlg.entity.title || 'Chat') : 'Chat';
-        await saveMsg(msg, cid, cname);
+        if (isChatSynced(cid)) await saveMsg(msg, cid, cname);
         const lastEl = document.querySelector('.chat-item[data-cid="' + cid + '"] .chat-last');
         if (lastEl) lastEl.textContent = (msg.message || '').substring(0, 50);
+
       }
     }, new NewMessage({}));
 
@@ -2707,6 +2708,13 @@ async function loadDialogs() {
   }
 }
 
+function isChatSynced(cid) {
+  return localStorage.getItem('tg_kindle_sync_' + cid) === '1';
+}
+function setChatSync(cid, val) {
+  if (val) localStorage.setItem('tg_kindle_sync_' + cid, '1');
+  else localStorage.removeItem('tg_kindle_sync_' + cid);
+}
 function renderChatList(dialogs) {
   const list = $('chat-list');
   list.innerHTML = '';
@@ -2722,6 +2730,7 @@ function renderChatList(dialogs) {
     const isGrp = !!(e.megagroup || e.broadcast || e.gigagroup);
     const lastMsg = d.message && d.message.message ? d.message.message : '';
     const unread = d.unreadCount || 0;
+    const synced = isChatSynced(cid);
     const item = document.createElement('div');
     item.className = 'chat-item';
     item.dataset.cid = cid;
@@ -2731,11 +2740,21 @@ function renderChatList(dialogs) {
         '<div class="chat-name">' + escHtml(name) + '</div>' +
         '<div class="chat-last">' + escHtml(lastMsg.substring(0, 50)) + '</div>' +
       '</div>' +
-      (unread > 0 ? '<div class="chat-unread">' + unread + '</div>' : '');
+      (unread > 0 ? '<div class="chat-unread">' + unread + '</div>' : '') +
+      '<label style="display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer;flex-shrink:0;padding-left:6px;" onclick="event.stopPropagation()">' +
+        '<input type="checkbox" data-sync-cid="' + cid + '" ' + (synced ? 'checked' : '') + ' style="width:16px;height:16px;cursor:pointer;">' +
+        '<span style="font-size:0.6rem;color:var(--ink-faint);">Kindle</span>' +
+      '</label>';
     item.onclick = () => openChat(d, cid, name);
     list.appendChild(item);
   });
+  list.querySelectorAll('input[data-sync-cid]').forEach(cb => {
+    cb.addEventListener('change', function() {
+      setChatSync(this.dataset.syncCid, this.checked);
+    });
+  });
 }
+
 
 $('chat-search').oninput = function() {
   const q = this.value.toLowerCase();
@@ -2857,8 +2876,9 @@ async function sendMessage() {
   try {
     const result = await tgClient.sendMessage(activeChatPeer, { message: text });
     appendMsgBubble(result);
-    if (activeChatId) await saveMsg(result, activeChatId, $('msg-chat-name').textContent);
+    if (activeChatId && isChatSynced(activeChatId)) await saveMsg(result, activeChatId, $('msg-chat-name').textContent);
     addLog('Dihantar: "' + text.substring(0,30) + '"', 'ok');
+
   } catch(err) {
     addLog('Gagal hantar: ' + err.message, 'err');
     input.value = text;
@@ -2885,7 +2905,7 @@ $('file-input').onchange = async function() {
       forceDocument: !file.type.startsWith('image/')
     });
     appendMsgBubble(result);
-    if (activeChatId) await saveMsg(result, activeChatId, $('msg-chat-name').textContent);
+    if (activeChatId && isChatSynced(activeChatId)) await saveMsg(result, activeChatId, $('msg-chat-name').textContent);
     addLog('Fail dihantar: ' + file.name, 'ok');
   } catch(err) {
     addLog('Gagal hantar fail: ' + err.message, 'err');
