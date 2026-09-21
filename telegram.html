@@ -2498,7 +2498,7 @@ function escHtml(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
-// ─── LocalStorage + Firestore session ─────────────────────
+// ─── Creds (localStorage) + Session (Firestore) ───────────
 const LS_KEY = 'tg_bridge_creds';
 let currentUser = null;
 
@@ -2517,20 +2517,21 @@ function loadCreds() {
     if (d.phone) $('inp-phone').value = d.phone;
   } catch(e) {}
 }
-async function saveSessionToFirestore(sessionStr) {
-  if (!currentUser) return;
+async function saveSessionFS(str) {
+  if (!currentUser || !str) return;
   try {
-    await db.doc('users/' + currentUser.uid + '/tg_session/main').set({ session: sessionStr, updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
-  } catch(e) { console.warn('Save session err:', e); }
+    await db.doc('users/' + currentUser.uid + '/tg_session/main')
+      .set({ session: str, updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
+  } catch(e) { console.warn('saveSession err:', e); }
 }
-async function loadSessionFromFirestore() {
+async function loadSessionFS() {
   if (!currentUser) return '';
   try {
     const snap = await db.doc('users/' + currentUser.uid + '/tg_session/main').get();
     return snap.exists ? (snap.data().session || '') : '';
   } catch(e) { return ''; }
 }
-async function clearSessionFromFirestore() {
+async function clearSessionFS() {
   if (!currentUser) return;
   try { await db.doc('users/' + currentUser.uid + '/tg_session/main').delete(); } catch(e) {}
 }
@@ -2548,10 +2549,8 @@ async function connectTelegram() {
   const phone = $('inp-phone').value.trim();
   if (!apiId || !apiHash || !phone) { toast('Isi semua maklumat!'); return; }
 
-  // Check GramJS loaded
   if (!window.telegram || !window.telegram.TelegramClient) {
     addLog('GramJS belum load. Muat semula halaman.', 'err');
-    toast('GramJS tidak load. Muat semula halaman.');
     return;
   }
 
@@ -2565,32 +2564,48 @@ async function connectTelegram() {
     const { StringSession } = window.telegram.sessions;
     const { NewMessage } = window.telegram.events;
 
-    const sessionStr = await loadSessionFromFirestore() || localStorage.getItem('tg_session_backup') || '';
-    const session = new StringSession(sessionStr);
+    const savedSession = await loadSessionFS();
+    const session = new StringSession(savedSession);
 
     tgClient = new TelegramClient(session, apiId, apiHash, {
       connectionRetries: 5,
       useWSS: true,
     });
 
-    await tgClient.start({
-      phoneNumber: async () => phone,
-      password: async () => {
-        $('twofa-section').style.display = 'block';
-        addLog('2FA diperlukan.', 'info');
-        return new Promise(r => { resolve2fa = r; });
-      },
-      phoneCode: async () => {
-        $('otp-section').style.display = 'block';
-        addLog('OTP dihantar ke Telegram anda.', 'info');
-        return new Promise(r => { resolveOtp = r; });
-      },
-      onError: err => addLog('Ralat: ' + err.message, 'err')
-    });
+    if (savedSession) {
+      // Ada session tersimpan — connect terus tanpa OTP
+      addLog('Session ditemui, reconnect tanpa OTP...', 'info');
+      await tgClient.connect();
+      const ok = await tgClient.checkAuthorization();
+      if (!ok) {
+        addLog('Session tamat tempoh. Perlu login semula.', 'err');
+        await clearSessionFS();
+        setBadge('error');
+        $('btn-connect').disabled = false;
+        $('btn-connect').textContent = '⚡ Sambung Telegram';
+        toast('Session tamat. Sila sambung semula.', 5000);
+        return;
+      }
+    } else {
+      // Tiada session — login penuh dengan OTP
+      await tgClient.start({
+        phoneNumber: async () => phone,
+        password: async () => {
+          $('twofa-section').style.display = 'block';
+          addLog('2FA diperlukan.', 'info');
+          return new Promise(r => { resolve2fa = r; });
+        },
+        phoneCode: async () => {
+          $('otp-section').style.display = 'block';
+          addLog('OTP dihantar ke Telegram anda.', 'info');
+          return new Promise(r => { resolveOtp = r; });
+        },
+        onError: err => addLog('Ralat: ' + err.message, 'err')
+      });
+    }
 
-    const sessionStr = tgClient.session.save();
-    localStorage.setItem('tg_session_backup', sessionStr);
-    await saveSessionToFirestore(sessionStr);
+    // Simpan/kemaskini session
+    await saveSessionFS(tgClient.session.save());
     tgMe = await tgClient.getMe();
     addLog('Berjaya: @' + (tgMe.username || tgMe.firstName), 'ok');
 
@@ -2603,7 +2618,7 @@ async function connectTelegram() {
 
     await loadDialogs();
 
-    // Monitor new messages
+    // Monitor mesej baru
     tgClient.addEventHandler(async (event) => {
       const msg = event.message;
       if (!msg) return;
@@ -2793,45 +2808,48 @@ async function sendMessage() {
 $('btn-msg-send').onclick = sendMessage;
 $('msg-input').onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } };
 
-// ─── Buttons ──────────────────────────────────────────────
+// ─── Butang disconnect & clear ────────────────────────────
 $('btn-connect').onclick = connectTelegram;
 $('btn-disconnect').onclick = () => {
   if (tgClient) { tgClient.disconnect().catch(() => {}); tgClient = null; }
   setBadge('off');
   $('btn-connect').style.display = '';
   $('btn-connect').disabled = false;
+  $('btn-connect').textContent = '⚡ Sambung Telegram';
   $('btn-disconnect').style.display = 'none';
   $('main-section').style.display = 'none';
   addLog('Putus sambungan.', 'info');
 };
 $('btn-clear-session').onclick = async () => {
-  if (!confirm('Padam session?')) return;
-  localStorage.removeItem('tg_session_backup');
-  await clearSessionFromFirestore();
-  toast('Session dipadam. Log masuk semula.');
+  if (!confirm('Padam session? Anda perlu masukkan OTP semula.')) return;
+  await clearSessionFS();
+  toast('Session dipadam.');
+  addLog('Session dipadam dari Firestore.', 'info');
 };
+$('btn-refresh-chats').onclick = loadDialogs;
 
-// ─── Firebase Auth + Auto-reconnect ───────────────────────
+// ─── Firebase Auth → Auto-reconnect ───────────────────────
 firebase.auth().onAuthStateChanged(async (user) => {
   currentUser = user;
   if (!user) {
-    // Auto login dengan Google
+    // Login Google automatik
     const provider = new firebase.auth.GoogleAuthProvider();
     firebase.auth().signInWithPopup(provider).catch(e => addLog('Auth gagal: ' + e.message, 'err'));
     return;
   }
-  addLog('Firebase auth: ' + user.email, 'ok');
+  addLog('Firebase: ' + user.email, 'ok');
   loadCreds();
-
-  // Auto-reconnect jika ada session tersimpan
-  const savedSession = await loadSessionFromFirestore() || localStorage.getItem('tg_session_backup') || '';
+  // Check ada session Telegram tersimpan
+  const savedSession = await loadSessionFS();
   if (savedSession) {
-    addLog('Session ditemui. Auto-reconnect...', 'info');
+    addLog('Session Telegram ditemui. Auto-reconnect...', 'info');
     $('btn-connect').textContent = '⚡ Sambung Semula';
-    // Auto connect
-    setTimeout(() => connectTelegram(), 500);
+    setTimeout(() => connectTelegram(), 800);
+  } else {
+    addLog('Tiada session. Isi maklumat dan tekan Sambung.', 'info');
   }
 });
+
 </script>
 </body>
 </html>
