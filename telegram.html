@@ -2882,12 +2882,32 @@ function appendMsgBubble(msg) {
 
 // ─── Firestore sync ───────────────────────────────────────
 async function syncMsgs(msgs, cid, cname) {
-  await db.doc('tg_messages/' + cid).set({ name: cname, chatId: cid, lastSync: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
+  const synced = isChatSynced(cid);
+  await db.doc('tg_messages/' + cid).set({ name: cname, chatId: cid, synced: synced, lastSync: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
+  if (!synced) return; // kalau tak ditick, jangan sync mesej
   const col = db.collection('tg_messages/' + cid + '/messages');
   for (const msg of msgs.slice(0, 30)) {
     if (!msg.message && !msg.media) continue;
+    let mediaLabel = '';
+    if (msg.media) {
+      const t = msg.media.className || (msg.media.constructor && msg.media.constructor.name) || '';
+      const doc = msg.media.document;
+      if (doc && doc.attributes) {
+        const isSticker = doc.attributes.some(a => (a.className||'') === 'DocumentAttributeSticker' || (a.constructor && a.constructor.name === 'DocumentAttributeSticker'));
+        const isVideo = doc.attributes.some(a => (a.className||'') === 'DocumentAttributeVideo' || (a.constructor && a.constructor.name === 'DocumentAttributeVideo'));
+        const isAudio = doc.attributes.some(a => (a.className||'') === 'DocumentAttributeAudio' || (a.constructor && a.constructor.name === 'DocumentAttributeAudio'));
+        const nameAttr = doc.attributes.find(a => a.fileName);
+        if (isSticker || (doc.mimeType && doc.mimeType.includes('webp'))) mediaLabel = '[Sticker]';
+        else if (isVideo) mediaLabel = '[Video]';
+        else if (isAudio) mediaLabel = '[Audio]';
+        else if (nameAttr) mediaLabel = '[Fail: ' + nameAttr.fileName + ']';
+        else mediaLabel = '[Fail]';
+      } else if (t.includes('Photo') || msg.media.photo) mediaLabel = '[Gambar]';
+      else mediaLabel = '[Media]';
+    }
     await col.doc(String(msg.id)).set({
       id: msg.id, text: msg.message || '', hasMedia: !!msg.media,
+      mediaLabel: mediaLabel,
       out: !!msg.out, date: msg.date,
       chatId: cid, chatName: cname,
       syncedAt: firebase.firestore.FieldValue.serverTimestamp()
