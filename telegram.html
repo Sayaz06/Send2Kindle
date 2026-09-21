@@ -2856,6 +2856,7 @@ async function syncMsgs(msgs, cid, cname) {
 async function saveMsg(msg, cid, cname) {
   if (!msg.message && !msg.media) return;
   try {
+    await db.doc('tg_messages/' + cid).set({ name: cname, synced: true }, { merge: true });
     await db.doc('tg_messages/' + cid + '/messages/' + msg.id).set({
       id: msg.id, text: msg.message || '', hasMedia: !!msg.media,
       out: !!msg.out, date: msg.date,
