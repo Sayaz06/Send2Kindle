@@ -2901,10 +2901,25 @@ async function saveMsg(msg, cid, cname) {
     await db.doc('tg_messages/' + cid).set({ name: cname, synced: true }, { merge: true });
     let mediaLabel = '';
     if (msg.media) {
-      const t = msg.media.className || msg.media.constructor && msg.media.constructor.name || '';
-      if (t.toLowerCase().includes('sticker') || (msg.media.document && msg.media.document.mimeType && msg.media.document.mimeType.includes('webp'))) mediaLabel = '[Sticker]';
-      else if (t.toLowerCase().includes('photo') || msg.media.photo) mediaLabel = '[Gambar]';
-      else if (t.toLowerCase().includes('document') || msg.media.document) mediaLabel = '[Fail]';
+      const t = msg.media.className || (msg.media.constructor && msg.media.constructor.name) || '';
+      const doc = msg.media.document;
+      if (doc && doc.attributes) {
+        const isSticker = doc.attributes.some(a =>
+          (a.className || '') === 'DocumentAttributeSticker' ||
+          (a.constructor && a.constructor.name === 'DocumentAttributeSticker'));
+        const isVideo = doc.attributes.some(a =>
+          (a.className || '') === 'DocumentAttributeVideo' ||
+          (a.constructor && a.constructor.name === 'DocumentAttributeVideo'));
+        const isAudio = doc.attributes.some(a =>
+          (a.className || '') === 'DocumentAttributeAudio' ||
+          (a.constructor && a.constructor.name === 'DocumentAttributeAudio'));
+        const nameAttr = doc.attributes.find(a => a.fileName);
+        if (isSticker || (doc.mimeType && doc.mimeType.includes('webp'))) mediaLabel = '[Sticker]';
+        else if (isVideo) mediaLabel = '[Video]';
+        else if (isAudio) mediaLabel = '[Audio]';
+        else if (nameAttr) mediaLabel = '[Fail: ' + nameAttr.fileName + ']';
+        else mediaLabel = '[Fail]';
+      } else if (t.includes('Photo') || msg.media.photo) mediaLabel = '[Gambar]';
       else mediaLabel = '[Media]';
     }
     await db.doc('tg_messages/' + cid + '/messages/' + msg.id).set({
