@@ -2853,11 +2853,8 @@ $('file-input').onchange = async function() {
   btn.disabled = true;
   btn.textContent = '⏳';
   try {
-    const buffer = await file.arrayBuffer();
-    const uint8 = new Uint8Array(buffer);
     const result = await tgClient.sendFile(activeChatPeer, {
-      file: uint8,
-      attributes: [{ _: 'documentAttributeFilename', fileName: file.name }],
+      file: file,
       caption: '',
       forceDocument: !file.type.startsWith('image/')
     });
