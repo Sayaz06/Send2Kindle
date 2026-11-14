@@ -1,7 +1,7 @@
 // ═══════════════════════════════════════════════════
 // Kindle Queue Manager
-// Firebase Auth (Google) + Firebase Storage + Firestore + Gmail API
-// Background queue via Cloud Functions (see BACKGROUND_SETUP.md)
+// Firebase Auth + Storage + Firestore + Gmail API
+// Background queue via Cloud Functions
 // ═══════════════════════════════════════════════════
 
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
@@ -10,7 +10,7 @@ import {
   GoogleAuthProvider, onAuthStateChanged
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
 import {
-  getFirestore, collection, doc, onSnapshot,
+  getFirestore, collection, doc, onSnapshot, getDoc,
   setDoc, updateDoc, deleteDoc, query, orderBy
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import {
@@ -18,7 +18,6 @@ import {
   uploadBytesResumable, getDownloadURL, deleteObject
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js';
 
-// ─── Firebase Config ───
 const firebaseConfig = {
   apiKey:            "AIzaSyAGLX_xxH_dQ06epX4XCXtuSHN0DwZFMjA",
   authDomain:        "stress-auti-action.firebaseapp.com",
@@ -42,11 +41,15 @@ const STORAGE_KEY = 'kindle_queue_settings';
 let currentUser     = null;
 let accessToken     = null;
 let isRunning       = false;
+let clientWorker    = false;
 let queueItems      = [];
 let queueTimer      = null;
 let countdownInterval = null;
 let nextSendAt      = null;
 let unsubscribeQueue = null;
+let unsubscribeSettings = null;
+let kindleAddresses = [];
+let unsubscribeAddresses = null;
 let tokenClient     = null;
 let gmailReady      = false;
 
@@ -100,11 +103,172 @@ function showToast(msg, type = '', dur = 3500) {
   toastTimer = setTimeout(() => elToast.classList.remove('show'), dur);
 }
 
-function loadSettings() {
+// ── Kindle Address Manager ──
+
+// ── Log Duplikat ──
+let skipLog = [];
+let unsubscribeLog = null;
+
+function skipLogCol() {
+  return collection(db, 'users', currentUser.uid, 'skip_log');
+}
+
+function subscribeLog() {
+  if (!currentUser) return;
+  if (unsubscribeLog) unsubscribeLog();
+  unsubscribeLog = onSnapshot(
+    query(skipLogCol(), orderBy('time', 'desc')),
+    snap => {
+      skipLog = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      renderLog();
+      if (skipLog.length > 0) {
+        document.getElementById('log-section').style.display = 'block';
+      }
+    },
+    () => {}
+  );
+}
+
+async function addToLog(fileName, reason) {
   try {
+    await setDoc(doc(skipLogCol()), {
+      fileName,
+      reason,
+      time: Date.now(),
+    });
+  } catch (e) {
+    console.warn('addToLog failed', e);
+  }
+}
+
+function renderLog() {
+  const list = document.getElementById('log-list');
+  if (!list) return;
+  if (skipLog.length === 0) {
+    document.getElementById('log-section').style.display = 'none';
+    list.innerHTML = '';
+    return;
+  }
+  list.innerHTML = skipLog.map(item => `
+    <div class="log-item" data-log-id="${item.id}">
+      <div class="log-item-info">
+        <div class="log-item-name">📄 ${item.fileName}</div>
+        <div class="log-item-reason">⚠️ ${item.reason}</div>
+      </div>
+      <div class="log-item-time">${timeAgo(item.time)}</div>
+      <button class="log-item-delete" onclick="deleteLogItem(${item.id})">✕</button>
+    </div>
+  `).join('');
+}
+
+window.deleteLogItem = async function(id) {
+  try {
+    await deleteDoc(doc(skipLogCol(), id));
+  } catch (e) {
+    showToast('❌ Gagal padam log.', 'error');
+  }
+};
+
+function kindleAddressCol() {
+  return collection(db, 'users', currentUser.uid, 'kindle_addresses');
+}
+
+function subscribeAddresses() {
+  if (!currentUser) return;
+  if (unsubscribeAddresses) unsubscribeAddresses();
+  unsubscribeAddresses = onSnapshot(
+    query(kindleAddressCol(), orderBy('createdAt', 'asc')),
+    snap => {
+      kindleAddresses = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      renderAddressList();
+      renderAddressDropdown();
+    },
+    () => {}
+  );
+}
+
+function renderAddressList() {
+  const container = document.getElementById('kindle-address-list');
+  if (!container) return;
+  if (kindleAddresses.length === 0) {
+    container.innerHTML = '<div style="font-size:0.75rem;color:var(--ink-faint);">Tiada alamat disimpan lagi.</div>';
+    return;
+  }
+  container.innerHTML = kindleAddresses.map(addr => `
+    <div class="kindle-address-item">
+      <div class="kindle-address-info">
+        <div class="kindle-address-label">${addr.label}</div>
+        <div class="kindle-address-email">${addr.email}</div>
+      </div>
+      <button class="kindle-address-use" onclick="useKindleAddress('${addr.email}')">Guna</button>
+      <button class="kindle-address-delete" onclick="deleteKindleAddress('${addr.id}')">✕</button>
+    </div>
+  `).join('');
+}
+
+function renderAddressDropdown() {
+  const select = document.getElementById('kindle-select');
+  if (!select) return;
+  const current = select.value;
+  select.innerHTML = '<option value="">-- Pilih alamat --</option>';
+  kindleAddresses.forEach(addr => {
+    const opt = document.createElement('option');
+    opt.value = addr.email;
+    opt.textContent = `${addr.label} — ${addr.email}`;
+    if (addr.email === current) opt.selected = true;
+    select.appendChild(opt);
+  });
+}
+
+window.useKindleAddress = function(email) {
+  document.getElementById('kindle-email').value = email;
+  const select = document.getElementById('kindle-select');
+  if (select) select.value = email;
+  showToast(`✅ Alamat dipilih: ${email}`, 'ok');
+};
+
+window.deleteKindleAddress = async function(id) {
+  try {
+    await deleteDoc(doc(kindleAddressCol(), id));
+    showToast('🗑️ Alamat dipadam.', '');
+  } catch (e) {
+    showToast('❌ Gagal padam.', 'error');
+  }
+};
+
+async function addKindleAddress() {
+  const label = document.getElementById('new-kindle-label').value.trim();
+  const email = document.getElementById('new-kindle-email').value.trim();
+  if (!label) { showToast('⚠️ Sila isi label.', 'error'); return; }
+  if (!email || !email.includes('@kindle.com')) { showToast('⚠️ Sila isi e-mel @kindle.com yang sah.', 'error'); return; }
+  try {
+    await setDoc(doc(kindleAddressCol()), {
+      label,
+      email,
+      createdAt: Date.now(),
+    });
+    document.getElementById('new-kindle-label').value = '';
+    document.getElementById('new-kindle-email').value = '';
+    showToast('✅ Alamat ditambah!', 'ok');
+  } catch (e) {
+    showToast('❌ Gagal tambah alamat.', 'error');
+  }
+}
+
+async function loadSettings() {
+  try {
+    if (currentUser) {
+      const snap = await getDoc(doc(db, 'users', currentUser.uid, 'settings', 'queue'));
+      if (snap.exists()) {
+        const s = snap.data();
+        elKindleEmail.value  = s.kindleEmail  || '';
+        elDelayMinutes.value = s.delayMinutes || 1;
+        return;
+      }
+    }
     const s = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
     elKindleEmail.value  = s.kindleEmail  || '';
-    elDelayMinutes.value = s.delayMinutes || 5;
+    elDelayMinutes.value = s.delayMinutes || 1;
   } catch (_) {}
 }
 
@@ -115,7 +279,6 @@ function saveSettings() {
     return false;
   }
   localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
-  // Sync ke Firestore untuk Cloud Function
   if (currentUser) {
     setDoc(doc(db, 'users', currentUser.uid, 'settings', 'queue'), {
       kindleEmail: s.kindleEmail,
@@ -131,11 +294,10 @@ function saveSettings() {
 function getSettings() {
   return {
     kindleEmail:  elKindleEmail.value.trim(),
-    delayMinutes: parseInt(elDelayMinutes.value) || 5,
+    delayMinutes: parseInt(elDelayMinutes.value) || 1,
   };
 }
 
-/** Flag background queue untuk Cloud Function */
 async function setQueueRunning(running) {
   if (!currentUser) return;
   const s = getSettings();
@@ -148,9 +310,60 @@ async function setQueueRunning(running) {
       nextSendAt: running ? Date.now() : null,
       updatedAt: Date.now(),
     }, { merge: true });
+
+    // Flag untuk Cloud Function (elak collectionGroup index)
+    if (running) {
+      await setDoc(doc(db, 'active_queues', currentUser.uid), {
+        running: true,
+        updatedAt: Date.now(),
+      });
+    } else {
+      await deleteDoc(doc(db, 'active_queues', currentUser.uid)).catch(() => {});
+    }
   } catch (e) {
     console.warn('setQueueRunning failed', e);
   }
+}
+
+async function restoreQueueState() {
+  if (!currentUser) return;
+  try {
+    const snap = await getDoc(doc(db, 'users', currentUser.uid, 'settings', 'queue'));
+    if (snap.exists() && snap.data().queueRunning === true) {
+      isRunning = true;
+      clientWorker = false;
+      updateStatusUI(true);
+      showToast('▶ Queue masih aktif di background.', 'ok', 4000);
+    } else {
+      isRunning = false;
+      clientWorker = false;
+      updateStatusUI(false);
+    }
+  } catch (e) {
+    console.warn('restoreQueueState', e);
+  }
+}
+
+function subscribeSettings() {
+  if (!currentUser) return;
+  if (unsubscribeSettings) unsubscribeSettings();
+  unsubscribeSettings = onSnapshot(
+    doc(db, 'users', currentUser.uid, 'settings', 'queue'),
+    (snap) => {
+      if (!snap.exists()) return;
+      const running = snap.data().queueRunning === true;
+      if (clientWorker) return;
+      if (running !== isRunning) {
+        isRunning = running;
+        updateStatusUI(running);
+        if (!running) {
+          clearCountdown();
+          showToast('✅ Queue background selesai / dihentikan.', 'ok', 4000);
+        }
+      }
+    },
+    () => {}
+  );
 }
 
 const provider = new GoogleAuthProvider();
@@ -241,6 +454,9 @@ async function signIn() {
 async function signOutUser() {
   stopQueue(false);
   if (unsubscribeQueue) { unsubscribeQueue(); unsubscribeQueue = null; }
+  if (unsubscribeSettings) { unsubscribeSettings(); unsubscribeSettings = null; }
+  if (unsubscribeAddresses) { unsubscribeAddresses(); unsubscribeAddresses = null; }
+  if (unsubscribeLog) { unsubscribeLog(); unsubscribeLog = null; }
   accessToken = null;
   gmailReady = false;
   await signOut(auth);
@@ -270,8 +486,12 @@ onAuthStateChanged(auth, async (user) => {
     elUserName.textContent = user.displayName || user.email;
     elGmailInfo.style.display = 'block';
     elGmailSender.textContent = user.email;
-    loadSettings();
+    await loadSettings();
     subscribeQueue();
+    subscribeSettings();
+    subscribeAddresses();
+    subscribeLog();
+    await restoreQueueState();
     if (!accessToken) await trySilentGmailToken();
   } else {
     elLoginScreen.style.display = 'flex';
@@ -281,6 +501,8 @@ onAuthStateChanged(auth, async (user) => {
     queueItems = [];
     accessToken = null;
     gmailReady = false;
+    isRunning = false;
+    clientWorker = false;
   }
 });
 
@@ -291,7 +513,7 @@ async function sendViaGmailAPI(toEmail, fileName, fileBlob) {
   const boundary = `boundary_${Date.now()}`;
   const emailLines = [
     `To: ${toEmail}`,
-    `Subject: Convert`,
+    `Subject: `,
     `MIME-Version: 1.0`,
     `Content-Type: multipart/mixed; boundary="${boundary}"`,
     ``,
@@ -410,12 +632,12 @@ function subscribeQueue() {
     queueItems = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderQueue();
     updateStats();
-    if (isRunning) checkAndSchedule();
+    if (isRunning && clientWorker) checkAndSchedule();
   });
 }
 
 function checkAndSchedule() {
-  if (!isRunning) return;
+  if (!isRunning || !clientWorker) return;
   const sending = queueItems.find(i => i.status === 'sending');
   if (sending) return;
 
@@ -427,7 +649,6 @@ function checkAndSchedule() {
   }
 
   if (!nextSendAt) {
-    // Fail pertama selepas tekan Mula → terus hantar (tiada tunggu)
     const delayMs = skipFirstDelay ? 0 : getSettings().delayMinutes * 60 * 1000;
     skipFirstDelay = false;
     nextSendAt = Date.now() + delayMs;
@@ -438,7 +659,7 @@ function checkAndSchedule() {
 }
 
 async function processNext() {
-  if (!isRunning) return;
+  if (!isRunning || !clientWorker) return;
   clearCountdown();
 
   const next = queueItems.find(i => i.status === 'pending');
@@ -460,22 +681,24 @@ async function processNext() {
     showToast(`❌ Gagal: ${next.originalName}`, 'error', 5000);
   }
 
-  if (isRunning) { nextSendAt = null; checkAndSchedule(); }
+  if (isRunning && clientWorker) { nextSendAt = null; checkAndSchedule(); }
 }
 
 let skipFirstDelay = false;
 
 function startQueue() {
   isRunning = true;
+  clientWorker = true;
   nextSendAt = null;
   skipFirstDelay = true;
   updateStatusUI(true);
-  setQueueRunning(true); // enable Cloud Function background
+  setQueueRunning(true);
   checkAndSchedule();
 }
 
 function stopQueue(showMsg = true) {
   isRunning = false;
+  clientWorker = false;
   clearTimeout(queueTimer);
   queueTimer = null;
   clearCountdown();
@@ -598,7 +821,7 @@ function updateItemEl(el, item) {
   progEl.style.display = item.status === 'sending' ? 'block' : 'none';
   btnRem.style.display = item.status === 'sending' ? 'none' : 'inline-flex';
   btnRet.style.display = item.status === 'failed'  ? 'inline-flex' : 'none';
-  btnNow.style.display = (item.status === 'pending' && isRunning) ? 'inline-flex' : 'none';
+  btnNow.style.display = (item.status === 'pending' && isRunning && clientWorker) ? 'inline-flex' : 'none';
 }
 
 function setupItemEvents(el, item) {
@@ -609,10 +832,10 @@ function setupItemEvents(el, item) {
   });
   el.querySelector('.btn-retry').addEventListener('click', async () => {
     await updateQueueItem(item.id, { status: 'pending', error: null });
-    if (isRunning && !nextSendAt) checkAndSchedule();
+    if (isRunning && clientWorker && !nextSendAt) checkAndSchedule();
   });
   el.querySelector('.btn-send-now').addEventListener('click', async () => {
-    if (!isRunning) return;
+    if (!isRunning || !clientWorker) return;
     clearTimeout(queueTimer);
     clearCountdown();
     nextSendAt = null;
@@ -646,6 +869,12 @@ async function uploadFiles(files) {
   elUploadProgress.style.display = 'flex';
   let done = 0;
   for (const f of valid) {
+    const isDuplicate = queueItems.some(i => i.originalName === f.name && i.status !== 'sent');
+    if (isDuplicate) {
+      showToast(`⚠️ Diskip: ${f.name}`, 'error', 4000);
+      setTimeout(() => addToLog(f.name, 'Nama fail dah ada dalam queue'), 4000);
+      continue;
+    }
     elUploadText.textContent = `Memuat naik ${f.name}...`;
     try {
       const { path, url } = await uploadFile(f, pct => {
@@ -696,6 +925,12 @@ function closeStartPopup() {
 }
 
 elBtnSignin.addEventListener('click', signIn);
+document.getElementById('btn-add-kindle').addEventListener('click', addKindleAddress);
+document.getElementById('kindle-select').addEventListener('change', function() {
+  if (this.value) {
+    document.getElementById('kindle-email').value = this.value;
+  }
+});
 elBtnSignout.addEventListener('click', signOutUser);
 elBtnSave.addEventListener('click', saveSettings);
 
@@ -722,7 +957,7 @@ elBtnStart.addEventListener('click', async () => {
 
   saveSettings();
   startQueue();
-  showToast(`▶ Queue dimulakan (boleh tutup tab jika Cloud Functions sudah setup). Selang: ${s.delayMinutes} min.`, 'ok', 5000);
+  showToast(`▶ Queue dimulakan (boleh tutup tab). Selang: ${s.delayMinutes} min.`, 'ok', 5000);
 });
 
 elBtnStop.addEventListener('click', () => stopQueue(true));
@@ -733,6 +968,28 @@ $('kq-pop-start').addEventListener('click', () => {
 });
 $('kq-pop-later').addEventListener('click', closeStartPopup);
 elPop.addEventListener('click', e => { if (e.target === elPop) closeStartPopup(); });
+
+document.getElementById('btn-sort-az').addEventListener('click', async () => {
+  const pending = queueItems.filter(i => i.status === 'pending');
+  if (pending.length === 0) { showToast('⚠️ Tiada fail pending untuk disusun.', 'error'); return; }
+  const sorted = [...pending].sort((a, b) => a.originalName.localeCompare(b.originalName, undefined, { numeric: true, sensitivity: 'base' }));
+  const baseTime = Date.now();
+  for (let i = 0; i < sorted.length; i++) {
+    await updateQueueItem(sorted[i].id, { addedAt: baseTime + i });
+  }
+  showToast('✅ Queue disusun A-Z!', 'ok');
+});
+
+document.getElementById('btn-clear-log').addEventListener('click', async () => {
+  try {
+    for (const item of skipLog) {
+      await deleteDoc(doc(skipLogCol(), item.id));
+    }
+    showToast('🗑️ Log dibersihkan.', 'ok');
+  } catch (e) {
+    showToast('❌ Gagal bersihkan log.', 'error');
+  }
+});
 
 elBtnClearSent.addEventListener('click', async () => {
   const toDelete = queueItems.filter(i => i.status === 'sent' || i.status === 'failed');
