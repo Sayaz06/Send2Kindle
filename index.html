@@ -14,6 +14,33 @@
 
 <div id="toast" class="toast"></div>
 
+<!-- POPUP MULA QUEUE -->
+<style>
+  .kq-pop-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 9999; display: none; align-items: center; justify-content: center; padding: 20px; }
+  .kq-pop-bg.show { display: flex; }
+  .kq-pop { background: #1c1c21; border: 1px solid #333; border-radius: 18px; padding: 22px; max-width: 360px; width: 100%; box-shadow: 0 10px 40px rgba(0,0,0,0.5); }
+  .kq-pop-title { font-size: 1.05rem; font-weight: 600; margin: 0 0 8px; }
+  .kq-pop-text { font-size: 0.9rem; opacity: 0.8; margin: 0 0 16px; line-height: 1.5; }
+  .kq-pop-tick { display: flex; align-items: center; font-size: 0.85rem; opacity: 0.85; margin-bottom: 18px; cursor: pointer; }
+  .kq-pop-tick input { margin: 0 8px 0 0; width: 18px; height: 18px; }
+  .kq-pop-btns { display: flex; justify-content: flex-end; }
+  .kq-pop-btns .btn { margin-left: 10px; }
+</style>
+<div id="kq-pop" class="kq-pop-bg">
+  <div class="kq-pop">
+    <h3 class="kq-pop-title">Fail baru dalam queue</h3>
+    <p id="kq-pop-text" class="kq-pop-text">Adakah anda ingin mula hantar sekarang? Atau tekan butang Mula Queue bila-bila masa untuk mula hantar queue.</p>
+    <label class="kq-pop-tick">
+      <input type="checkbox" id="kq-pop-snooze" />
+      Jangan ingatkan saya lagi selama sejam
+    </label>
+    <div class="kq-pop-btns">
+      <button id="kq-pop-later" class="btn btn-ghost">Nanti</button>
+      <button id="kq-pop-start" class="btn btn-primary">▶ Mula</button>
+    </div>
+  </div>
+</div>
+
 <div class="app">
 
   <!-- HEADER -->
