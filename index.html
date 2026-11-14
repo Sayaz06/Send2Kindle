@@ -71,29 +71,47 @@
         <div id="settings-body" class="card-body">
           <div class="settings-group">
             <div class="settings-group-label">📱 Kindle</div>
-<div class="field">
-  <label class="field-label">E-mel Kindle Sasaran</label>
-  <input class="field-input" id="kindle-email" type="email" placeholder="nama@kindle.com" />
-</div>
+            <style>
+              .kq-tambah { margin-top: 10px; }
+              .kq-tambah > summary { list-style: none; cursor: pointer; display: inline-block; font-size: 0.85rem; padding: 8px 14px; }
+              .kq-tambah > summary::-webkit-details-marker { display: none; }
+              .kq-tambah[open] > summary { margin-bottom: 10px; }
+              .kq-tambah .field-input { margin-bottom: 8px; }
+            </style>
 
-<div class="field">
-  <label class="field-label">Senarai Alamat Kindle
-    <span class="field-hint">simpan berbilang alamat</span>
-  </label>
-  <div id="kindle-address-list" class="kindle-address-list"></div>
-  <div class="kindle-add-row">
-    <input class="field-input" id="new-kindle-label" type="text" placeholder="Label (contoh: Kindle E-reader)" />
-    <input class="field-input" id="new-kindle-email" type="email" placeholder="nama@kindle.com" />
-    <button id="btn-add-kindle" class="btn btn-primary">+ Tambah</button>
-  </div>
-</div>
+            <!-- ALAMAT AKTIF -->
+            <div class="field">
+              <label class="field-label">E-mel Kindle Sasaran
+                <span class="field-hint">alamat aktif</span>
+              </label>
+              <input class="field-input" id="kindle-email" type="email" placeholder="nama@kindle.com" />
+            </div>
 
-<div class="field">
-  <label class="field-label">Pilih Alamat Kindle</label>
-  <select class="field-input" id="kindle-select">
-    <option value="">-- Pilih alamat --</option>
-  </select>
-</div>
+            <!-- PILIH DARI SENARAI -->
+            <div class="field">
+              <label class="field-label">Tukar Alamat
+                <span class="field-hint">pilih dari senarai</span>
+              </label>
+              <select class="field-input" id="kindle-select">
+                <option value="">-- Pilih alamat --</option>
+              </select>
+            </div>
+
+            <!-- SENARAI + TAMBAH (TERSOROK) -->
+            <div class="field">
+              <label class="field-label">Senarai Alamat Kindle
+                <span class="field-hint">simpan berbilang alamat</span>
+              </label>
+              <div id="kindle-address-list" class="kindle-address-list"></div>
+              <details class="kq-tambah">
+                <summary class="btn btn-ghost">+ Tambah Alamat Baru</summary>
+                <div class="kindle-add-row">
+                  <input class="field-input" id="new-kindle-label" type="text" placeholder="Label (contoh: Kindle E-reader)" />
+                  <input class="field-input" id="new-kindle-email" type="email" placeholder="nama@kindle.com" />
+                  <button id="btn-add-kindle" class="btn btn-primary">+ Simpan Alamat</button>
+                </div>
+              </details>
+            </div>
             <div class="field">
               <label class="field-label">
                 Selang Penghantaran
