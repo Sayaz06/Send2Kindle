@@ -307,7 +307,8 @@ async function setQueueRunning(running) {
       delayMinutes: s.delayMinutes,
       senderEmail: currentUser.email || null,
       queueRunning: running,
-      nextSendAt: running ? Date.now() : null,
+      // Tab yang hantar dulu; server tunggu (ambil alih jika tab ditutup)
+      nextSendAt: running ? Date.now() + KQ_GRACE_MS : null,
       updatedAt: Date.now(),
     }, { merge: true });
 
@@ -636,8 +637,22 @@ function subscribeQueue() {
   });
 }
 
+// ── Elak tab & server hantar serentak ──
+// Selagi tab buka, server (Cloud Function, setiap 2 min) disuruh tunggu
+// sehingga masa hantar tab + 3 minit. Tab ditutup → server ambil alih.
+const KQ_GRACE_MS = 3 * 60 * 1000;
+let sendingNow = false;
+
+function pushServerNextSendAt(ts) {
+  if (!currentUser) return;
+  setDoc(doc(db, 'users', currentUser.uid, 'settings', 'queue'), {
+    nextSendAt: ts + KQ_GRACE_MS,
+  }, { merge: true }).catch(() => {});
+}
+
 function checkAndSchedule() {
   if (!isRunning || !clientWorker) return;
+  if (sendingNow) return;
   const sending = queueItems.find(i => i.status === 'sending');
   if (sending) return;
 
@@ -652,6 +667,7 @@ function checkAndSchedule() {
     const delayMs = skipFirstDelay ? 0 : getSettings().delayMinutes * 60 * 1000;
     skipFirstDelay = false;
     nextSendAt = Date.now() + delayMs;
+    pushServerNextSendAt(nextSendAt);
     startCountdownDisplay(next);
     clearTimeout(queueTimer);
     queueTimer = setTimeout(() => processNext(), delayMs);
@@ -660,15 +676,19 @@ function checkAndSchedule() {
 
 async function processNext() {
   if (!isRunning || !clientWorker) return;
+  if (sendingNow) return;
   clearCountdown();
 
   const next = queueItems.find(i => i.status === 'pending');
   if (!next) return;
 
   const s = getSettings();
-  await updateQueueItem(next.id, { status: 'sending' });
+  sendingNow = true;
+  // Pastikan server tak sentuh fail ini semasa tab sedang hantar
+  pushServerNextSendAt(Date.now() + s.delayMinutes * 60 * 1000);
 
   try {
+    await updateQueueItem(next.id, { status: 'sending' });
     showToast(`⬇️ Memuat turun ${next.originalName}...`, '');
     const blob = await downloadBlob(next.url);
     showToast(`📤 Menghantar ${next.originalName}...`, '');
@@ -677,10 +697,11 @@ async function processNext() {
     showToast(`✅ Dihantar: ${next.originalName}`, 'ok');
   } catch (err) {
     const msg = err?.message || 'Ralat tidak diketahui';
-    await updateQueueItem(next.id, { status: 'failed', error: msg });
+    await updateQueueItem(next.id, { status: 'failed', error: msg }).catch(() => {});
     showToast(`❌ Gagal: ${next.originalName}`, 'error', 5000);
   }
 
+  sendingNow = false;
   if (isRunning && clientWorker) { nextSendAt = null; checkAndSchedule(); }
 }
 
